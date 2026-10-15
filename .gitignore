@@ -1,0 +1,16 @@
+# build artifacts
+*.o
+lumen
+lambert_fps
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# editor / backup
+*.bak
+*.broken
+*.swp
+
+# large assets — decide per-file, don't blanket ignore
+# wood.zip
