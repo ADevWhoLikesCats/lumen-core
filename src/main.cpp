@@ -23,6 +23,7 @@
 #include "controller.h"
 #include "physics_world.h"
 #include "physics_debug.h"
+#include "transform.h"
 #include "fixed_step.h"
 
 #include <vector>
@@ -221,6 +222,13 @@ int main() {
     physDebug.init();
     physics.world()->setDebugDrawer(&physDebug);
     FixedStep fixed;
+
+    // Dynamic test box. Falls under gravity and lands on the floor slab.
+    // Its transform is read each frame and drawn with the instanced cubes.
+    btRigidBody* testBox = physics.addDynamicBox(
+        glm::vec3(0.4f),
+        glm::translate(glm::mat4(1.f), glm::vec3(48.f, 10.f, 44.f)),
+        1.0f);
 
     {
         // Floor slab collider. Same transform as the visual floor.
@@ -728,8 +736,24 @@ int main() {
         glActiveTexture(GL_TEXTURE0);
         shadow.bindForReading(1);
         if (crateTex.id) crateTex.bind(2);
+        // Append the dynamic box to the instanced draw this frame.
+        // We reuse the same cube mesh, colors and materials vectors.
+        if (testBox) {
+            btTransform t;
+            testBox->getMotionState()->getWorldTransform(t);
+            cubeModels.push_back(btToGlm(t));
+            cubeColors.push_back(glm::vec3(0.85f, 0.25f, 0.15f));
+            cubeMaterials.push_back(0.f);
+        }
         instancedCube.upload(cubeModels, cubeColors, cubeMaterials);
         instancedCube.draw();
+
+        // Pop the box so the next frame doesn't accumulate.
+        if (testBox) {
+            cubeModels.pop_back();
+            cubeColors.pop_back();
+            cubeMaterials.pop_back();
+        }
 
         // Non-instanced geometry (floor, GLB)
         pbrModelShader.use();
