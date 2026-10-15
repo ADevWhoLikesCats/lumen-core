@@ -21,6 +21,8 @@
 #include "map.h"
 #include "collider.h"
 #include "controller.h"
+#include "physics_world.h"
+#include "fixed_step.h"
 
 #include <vector>
 #include <unordered_map>
@@ -209,14 +211,17 @@ int main() {
     // ---------- Map ----------
     GeneratedMap map = generateMap(24, 24, 4.0f, 1337u);
 
-    std::vector<OBB> world;
+    // ---------- Physics ----------
+    PhysicsWorld physics;
+    physics.init();
+    FixedStep fixed;
+
     {
-        // Center the slab under the visual floor mesh, which sits at
-        // (W*tile/2, 0, H*tile/2). Same center as the floor's visual transform.
+        // Floor slab collider. Same transform as the visual floor.
         glm::vec3 ctr(map.W*map.tile*0.5f, -0.5f, map.H*map.tile*0.5f);
         glm::mat4 fm = glm::translate(glm::mat4(1.f), ctr)
                      * glm::scale(glm::mat4(1.f), glm::vec3(map.W*map.tile, 1.f, map.H*map.tile));
-        world.push_back(OBB::fromMatrix(fm, glm::vec3(0.5f)));
+        physics.addStaticOBB(OBB::fromMatrix(fm, glm::vec3(0.5f)));
     }
 
     // Scene: an Instance is mesh + transform + color + material flag
@@ -247,7 +252,7 @@ int main() {
     // Walls
     for (size_t i = 0; i < map.wallTransforms.size(); ++i) {
         add(cube, map.wallTransforms[i], {0.55f, 0.53f, 0.50f});
-        world.push_back(map.wallColliders[i]);
+        physics.addStaticOBB(map.wallColliders[i]);
     }
 
     // Props
@@ -275,7 +280,7 @@ int main() {
                 glm::mat4 m = glm::translate(glm::mat4(1.f), pos)
                             * glm::scale(glm::mat4(1.f), half * 2.f);
                 add(cube, m, color, nullptr, {1,1}, mat);
-                world.push_back(OBB::fromMatrix(m, glm::vec3(0.5f)));
+                physics.addStaticOBB(OBB::fromMatrix(m, glm::vec3(0.5f)));
             }
         }
     }
@@ -540,7 +545,15 @@ int main() {
         vy -= 20.f * dt;
         if (vy < -30.f) vy = -30.f;
         wish.y = vy;
-        player.move(wish * dt, world);
+
+        // Fixed-timestep physics. Accumulator tells us how many 1/60s
+        // substeps to run; the character controller is kinematic and
+        // stepped in lockstep with the dynamics world.
+        int steps = fixed.tick(dt);
+        for (int s = 0; s < steps; ++s) {
+            physics.step(fixed.dt);
+            player.move(wish * fixed.dt, &physics);
+        }
         if (player.grounded && vy < 0.f) vy = 0.f;
         cam.pos = player.eye();
 
@@ -993,6 +1006,8 @@ int main() {
     probe_grid_destroy(&probeGrid);
     if (ssrFB.fbo) fb_destroy(&ssrFB);
     if (ssrCompositeFB.fbo) fb_destroy(&ssrCompositeFB);
+
+    physics.shutdown();
 
     glfwDestroyWindow(win);
     glfwTerminate();

@@ -1,8 +1,8 @@
 # -------- toolchain --------
 CXX      := g++
 CC       := gcc
-CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -DLUMEN_HAVE_BULLET=1 -Iinclude -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene
-CFLAGS   := -O2 -Wall -Wextra -Iinclude -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene
+CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -DLUMEN_HAVE_BULLET=1 -Iinclude -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene -Isrc/physics -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene -I/usr/include/bullet
+CFLAGS   := -O2 -Wall -Wextra -Iinclude -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene -Isrc/physics -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene -I/usr/include/bullet
 
 # -------- platform / linking --------
 LDFLAGS :=
@@ -17,7 +17,7 @@ ifeq ($(OS),Windows_NT)
 endif
 
 # -------- sources --------
-SRC    := src/core/asset.cpp src/core/collision.cpp src/main.cpp src/render/framebuffer.cpp src/render/mesh.cpp src/render/pass.cpp src/render/texture.cpp src/scene/glb_loader.cpp src/scene/map.cpp src/scene/probe_grid.cpp src/scene/tri_grid.cpp src/glad.c
+SRC    := src/core/asset.cpp src/core/collision.cpp src/main.cpp src/render/framebuffer.cpp src/render/mesh.cpp src/render/pass.cpp src/render/texture.cpp src/scene/glb_loader.cpp src/scene/map.cpp src/scene/probe_grid.cpp src/scene/tri_grid.cpp src/glad.c src/physics/physics_world.cpp src/physics/physics_debug.cpp
 OBJ    := $(SRC:.cpp=.o)
 OBJ    := $(OBJ:.c=.o)
 
@@ -42,8 +42,8 @@ src/%.o: src/%.c
 run: all
 	./$(TARGET)
 
-debug: CXXFLAGS := -std=c++17 -O0 -g -fsanitize=address -Wall -Wextra -Iinclude -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene
-debug: CFLAGS   := -O0 -g -fsanitize=address -Wall -Wextra -Iinclude -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene
+debug: CXXFLAGS := -std=c++17 -O0 -g -fsanitize=address -Wall -Wextra -Iinclude -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene -Isrc/physics -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene -I/usr/include/bullet
+debug: CFLAGS   := -O0 -g -fsanitize=address -Wall -Wextra -Iinclude -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene -Isrc/physics -Iinclude/stb -Isrc -Isrc/core -Isrc/render -Isrc/scene -I/usr/include/bullet
 debug: LDFLAGS  += -fsanitize=address
 debug: clean all
 
