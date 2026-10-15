@@ -23,7 +23,10 @@
 #include "controller.h"
 #include "physics_world.h"
 #include "physics_debug.h"
+#include "vehicle.h"
+#include "car_renderer.h"
 #include "audio.h"
+#include "audio_events.h"
 #include "transform.h"
 #include "fixed_step.h"
 
@@ -108,6 +111,8 @@ struct Input {
     bool shift = false;
     bool debugPhysics = false;
     bool playBeep = false;
+    bool cycleCarFix = false;
+    float scroll = 0.f;
 };
 static Input gInput;
 
@@ -121,6 +126,7 @@ static void key_cb(GLFWwindow*, int key, int, int action, int) {
     if (key == GLFW_KEY_D) gInput.d = down;
     if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) gInput.shift = down;
     if (key == GLFW_KEY_P && action == GLFW_PRESS) gInput.debugPhysics = !gInput.debugPhysics;
+    if (key == GLFW_KEY_K && action == GLFW_PRESS) gInput.cycleCarFix = true;
     if (key == GLFW_KEY_F && action == GLFW_PRESS) gInput.playBeep = true;
 }
 
@@ -129,6 +135,10 @@ static void mouse_cb(GLFWwindow*, double x, double y) {
     gInput.dx += float(x - gInput.lastX);
     gInput.dy += float(y - gInput.lastY);
     gInput.lastX = x; gInput.lastY = y;
+}
+
+static void scroll_cb(GLFWwindow*, double, double yoff) {
+    gInput.scroll += float(yoff);
 }
 
 // ===============================================================
@@ -198,6 +208,7 @@ int main() {
 
     glfwSetKeyCallback(win, key_cb);
     glfwSetCursorPosCallback(win, mouse_cb);
+    glfwSetScrollCallback(win, scroll_cb);
     glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     std::cout << "GL " << glGetString(GL_VERSION) << "\n";
@@ -216,11 +227,25 @@ int main() {
     Mesh floor = makePlane(1.f);
 
     // ---------- Map ----------
-    GeneratedMap map = generateMap(24, 24, 4.0f, 1337u);
+    // Flat test map: no walls, no props, just the floor slab.
+    // generateMap is preserved but not called. Restore it later if
+    // you want the maze back.
+    GeneratedMap map;
+    map.W = 24; map.H = 24; map.tile = 4.0f;
+    map.cells.assign(map.W * map.H, MapCell{true});   // all walkable
+    map.spawn = glm::vec3(map.W*map.tile*0.5f, 1.0f, map.H*map.tile*0.5f);
+    map.floorTransform =
+        glm::translate(glm::mat4(1.f),
+                       glm::vec3(map.W*map.tile*0.5f, 0.f, map.H*map.tile*0.5f))
+      * glm::scale(glm::mat4(1.f), glm::vec3(map.W*map.tile, 1.f, map.H*map.tile));
 
     // ---------- Physics ----------
     PhysicsWorld physics;
     physics.init();
+
+    // Flat test ground. A very large thin box, top at y=0.
+    physics.addStaticBox(glm::vec3(500.f, 0.5f, 500.f),
+                         glm::translate(glm::mat4(1.f), glm::vec3(0.f, -0.5f, 0.f)));
     PhysicsDebugDraw physDebug;
     physDebug.init();
     physics.world()->setDebugDrawer(&physDebug);
@@ -228,6 +253,40 @@ int main() {
 
     Audio audio;
     audio.init();
+
+    ImpactQueue impactQueue;
+    gImpactQueue = &impactQueue;
+    audio_events_install();
+
+    // ---------- Vehicle ----------
+    // The glb is in centimetres. Positions below are already in metres,
+    // derived from the glb dump:
+    //   wheel centres (cm): FL(+65.9, +34.6, +99.4)  FR(-105.0, +34.6, +99.4)
+    //                       RL(+65.9, +36.4,-175.5)  RR(-105.0, +36.4,-175.5)
+    //   body centre (cm):   (-19.5, +65.3, -27.0)
+    // Scale factor: 0.01 (cm -> m).
+    Vehicle::Config carCfg;
+    carCfg.halfExtents    = glm::vec3(1.00f, 0.45f, 2.40f);
+    carCfg.bodyCenterLocal = glm::vec3(-0.195f, 0.653f, -0.270f);
+    carCfg.wheelPositions[0] = glm::vec3( 0.659f, 0.346f,  0.994f);  // FL
+    carCfg.wheelPositions[1] = glm::vec3(-1.050f, 0.346f,  0.994f);  // FR
+    carCfg.wheelPositions[2] = glm::vec3( 0.659f, 0.364f, -1.755f);  // RL
+    carCfg.wheelPositions[3] = glm::vec3(-1.050f, 0.364f, -1.755f);  // RR
+    carCfg.wheelCenters[0]   = glm::vec3( 0.659f, 0.346f,  0.994f);
+    carCfg.wheelCenters[1]   = glm::vec3(-1.050f, 0.346f,  0.994f);
+    carCfg.wheelCenters[2]   = glm::vec3( 0.659f, 0.364f, -1.755f);
+    carCfg.wheelCenters[3]   = glm::vec3(-1.050f, 0.364f, -1.755f);
+    carCfg.wheelRadii[0] = 0.345f;
+    carCfg.wheelRadii[1] = 0.345f;
+    carCfg.wheelRadii[2] = 0.364f;
+    carCfg.wheelRadii[3] = 0.364f;
+    carCfg.mass = 1500.f;
+
+    Vehicle car;
+    // Spawn the car at world origin, 0.8m up so it drops onto the flat ground.
+    glm::mat4 spawn = glm::translate(glm::mat4(1.f),
+                                     glm::vec3(0.f, 0.8f, 0.f));
+    car.init(&physics, spawn, carCfg);
 
     // Dynamic test box. Falls under gravity and lands on the floor slab.
     // Its transform is read each frame and drawn with the instanced cubes.
@@ -307,6 +366,46 @@ int main() {
 
     // ---------- Load GLB model ----------
     std::vector<GLBMesh> helmet = loadGLB("assets/damaged_helmet.glb");
+
+    // ---------- Car model ----------
+    std::vector<GLBMesh> carParts = loadGLB("assets/model.glb");
+    CarRenderer carRenderer;
+    if (!carRenderer.init(carParts)) {
+        std::fprintf(stderr, "[car] expected 6 parts, got %zu\n",
+                     carParts.size());
+    }
+
+    // ---------- Car material fixups ----------
+    // The Aventador glb was exported with a spec/gloss workflow. Two
+    // problems result:
+    //   - the "metallicRoughness" texture is really a specular map, so
+    //     the body reads as flat yellow with black splotches
+    //   - glass uses alphaMode:BLEND, which the deferred pipeline can't
+    //     resolve, so it renders as opaque black
+    // We patch both here rather than in the loader, since they're
+    // asset-specific.
+    for (auto& part : carParts) {
+        const std::string& n = part.material.baseColorFactor == glm::vec3(1.f)
+            ? std::string("") : std::string("");
+        (void)n;
+    }
+    if (carRenderer.body) {
+        Material& m = const_cast<Material&>(carRenderer.body->material);
+        m.ignoreMR        = true;
+        m.metallicFactor  = 0.25f;   // slight sheen
+        m.roughnessFactor = 0.35f;   // glossy paint
+        // Note: the Aventador body's winding is reversed relative to
+        // OpenGL's CCW convention. We handle that with glFrontFace(CW)
+        // at draw time rather than flipping the material.
+    }
+    if (carRenderer.glass) {
+        Material& m = const_cast<Material&>(carRenderer.glass->material);
+        m.forceOpaque    = true;
+        m.baseColorFactor = glm::vec3(0.08f, 0.08f, 0.10f);  // dark tint
+        m.metallicFactor  = 0.0f;
+        m.roughnessFactor = 0.05f;   // smooth glass
+    }
+    std::fprintf(stderr, "[car] material fixups applied\n");
     for (auto& gm : helmet) {
         glm::mat4 xf = glm::translate(glm::mat4(1.f), glm::vec3(48.f, 2.f, 44.f))
                      * glm::scale(glm::mat4(1.f), glm::vec3(3.f, 3.f, 3.f));
@@ -549,8 +648,9 @@ int main() {
         if (dt > 0.1f) dt = 0.1f;   // clamp big hitches
 
         // ---------- Input ----------
-        cam.mouse(gInput.dx, gInput.dy);
-        gInput.dx = gInput.dy = 0;
+        // Mouse deltas are consumed by the orbit camera below. When the
+        // FPS camera comes back, this becomes conditional:
+        //   if (!orbitActive) cam.mouse(gInput.dx, gInput.dy);
 
         glm::vec3 wish(0);
         if (gInput.w) wish += cam.forward();
@@ -573,11 +673,66 @@ int main() {
         for (int s = 0; s < steps; ++s) {
             physics.step(fixed.dt);
             player.move(wish * fixed.dt, &physics);
+            car.update(fixed.dt);
         }
         if (player.grounded && vy < 0.f) vy = 0.f;
         cam.pos = player.eye();
+
+        // TEMP: orbit camera around the car. Mouse controls yaw/pitch,
+        // scroll controls radius. Replaced by a real chase camera later.
+        {
+            static float orbitYaw    = 90.f;
+            static float orbitPitch  = -20.f;
+            static float orbitRadius = 8.f;
+
+            // Mouse look from existing input.
+            orbitYaw   += gInput.dx * 0.25f;
+            orbitPitch -= gInput.dy * 0.25f;
+            orbitPitch = glm::clamp(orbitPitch, -80.f, 80.f);
+
+            // Scroll wheel adjusts radius (GLFW callback feeds this in).
+            if (gInput.scroll != 0.f) {
+                orbitRadius *= (1.f - gInput.scroll * 0.1f);
+                orbitRadius = glm::clamp(orbitRadius, 2.f, 50.f);
+                gInput.scroll = 0.f;
+            }
+
+            // Compute position on a sphere around the car.
+            float cy = cosf(glm::radians(orbitYaw));
+            float sy = sinf(glm::radians(orbitYaw));
+            float cp = cosf(glm::radians(orbitPitch));
+            float sp = sinf(glm::radians(orbitPitch));
+            glm::vec3 dir(cp * cy, sp, cp * sy);
+
+            glm::vec3 carPos = glm::vec3(car.chassisTransform()[3]);
+            cam.pos = carPos + dir * orbitRadius;
+
+            // Aim the camera at the car. We set cam.yaw/pitch from the
+            // direction vector so the existing Camera::view() does the
+            // right thing.
+            cam.yaw   = glm::degrees(atan2f(dir.y * 0.f + sy, cy)) + 180.f;
+            cam.yaw   = glm::degrees(atan2f(-dir.z, -dir.x));
+            cam.pitch = -glm::degrees(asinf(dir.y));
+
+            // Consume the mouse delta for this frame. The next frame
+            // starts with zero and only accumulates new movement.
+            gInput.dx = gInput.dy = 0.f;
+            gInput.dx = gInput.dy = 0.f;
+        }
+
+        // Drain physics impacts -> 3D one-shots.
+        std::vector<ImpactEvent> impacts;
+        impactQueue.drain(impacts);
+        for (auto& e : impacts) {
+            float vol = 0.15f + e.strength * 0.85f;
+            audio.play3d("assets/beep.wav", e.position, vol);
+        }
         audio.setListener(cam.pos, cam.forward(), glm::vec3(0,1,0));
 
+        if (gInput.cycleCarFix) {
+            gInput.cycleCarFix = false;
+            carRenderer.cycleFix();
+        }
         if (gInput.playBeep) {
             gInput.playBeep = false;
             audio.play3d("assets/beep.wav", cam.pos + cam.forward() * 2.0f);
@@ -847,6 +1002,65 @@ int main() {
             }
             inst.mesh->draw();
         }
+
+        // ---------- Car ----------
+        // Body + glass follow the chassis transform; wheels follow
+        // Vehicle::wheelTransform(). All scaled by assetScale (cm -> m).
+        if (car.chassis() && carRenderer.body) {
+            const float S = carRenderer.assetScale;
+            glm::mat4 S_m = glm::scale(glm::mat4(1.f), glm::vec3(S));
+
+            auto drawPart = [&](const GLBMesh* part, const glm::mat4& worldM) {
+                if (!part) return;
+                glm::mat4 M = worldM * carRenderer.modelFix * S_m;
+                pbrModelShader.set("uModel", M);
+                pbrModelShader.set("uNormalMat",
+                    glm::mat3(glm::transpose(glm::inverse(M))));
+                pbrModelShader.set("uBaseColor", glm::vec3(1.f));
+                pbrModelShader.set("uMaterialOverride", 0.f);
+                pbrModelShader.set("uUVScale", glm::vec2(1.f));
+
+                const Material& mat = part->material;
+                pbrModelShader.set("uIsPBR", 1);
+                pbrModelShader.set("uBaseColorFactor", mat.baseColorFactor);
+                pbrModelShader.set("uMetallicFactor",  mat.metallicFactor);
+                pbrModelShader.set("uRoughnessFactor", mat.roughnessFactor);
+                pbrModelShader.set("uNormalScale",     mat.normalScale);
+                pbrModelShader.set("uEmissiveFactor",  mat.emissiveFactor);
+                pbrModelShader.set("uHasBaseColor", mat.basecolor ? 1 : 0);
+                pbrModelShader.set("uHasMR",        (mat.metallicRoughness && !mat.ignoreMR) ? 1 : 0);
+                pbrModelShader.set("uHasNormal",    mat.normal ? 1 : 0);
+                pbrModelShader.set("uHasEmissive",  mat.emissive ? 1 : 0);
+                pbrModelShader.set("uHasOcclusion", mat.occlusion ? 1 : 0);
+                pbrModelShader.set("uBaseColorTex",  7);
+                pbrModelShader.set("uMRTex",         8);
+                pbrModelShader.set("uNormalTex",     9);
+                pbrModelShader.set("uEmissiveTex",   10);
+                pbrModelShader.set("uOcclusionTex",  11);
+                if (mat.basecolor)       { glActiveTexture(GL_TEXTURE7);  glBindTexture(GL_TEXTURE_2D, mat.basecolor); }
+                if (mat.metallicRoughness){ glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D, mat.metallicRoughness); }
+                if (mat.normal)          { glActiveTexture(GL_TEXTURE9);  glBindTexture(GL_TEXTURE_2D, mat.normal); }
+                if (mat.emissive)        { glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_2D, mat.emissive); }
+                if (mat.occlusion)       { glActiveTexture(GL_TEXTURE11); glBindTexture(GL_TEXTURE_2D, mat.occlusion); }
+                glActiveTexture(GL_TEXTURE0);
+
+                // doubleSided from the glTF material — some exporters
+                // mark a mesh single-sided when it's non-manifold and
+                // needs both faces drawn.
+                if (mat.doubleSided) glDisable(GL_CULL_FACE);
+                part->mesh.draw();
+                if (mat.doubleSided) glEnable(GL_CULL_FACE);
+            };
+
+            glm::mat4 chassisWorld = car.chassisTransform();
+            drawPart(carRenderer.body,  chassisWorld);
+            drawPart(carRenderer.glass, chassisWorld);
+            for (int i = 0; i < 4; ++i) {
+                drawPart(carRenderer.wheel[i], car.wheelTransform(i));
+            }
+
+        }
+
         fb_unbind(fbw, fbh);
 
         // ---------- Blit current lit color into sceneFB.color ----------
@@ -1061,6 +1275,7 @@ int main() {
     if (ssrCompositeFB.fbo) fb_destroy(&ssrCompositeFB);
 
     physDebug.shutdown();
+    car.shutdown();
     audio.shutdown();
     physDebug.shutdown();
     physics.shutdown();

@@ -17,7 +17,7 @@ ifeq ($(OS),Windows_NT)
 endif
 
 # -------- sources --------
-SRC    := src/core/asset.cpp src/core/collision.cpp src/main.cpp src/render/framebuffer.cpp src/render/mesh.cpp src/render/pass.cpp src/render/texture.cpp src/scene/glb_loader.cpp src/scene/map.cpp src/scene/probe_grid.cpp src/scene/tri_grid.cpp src/glad.c src/physics/physics_world.cpp src/physics/physics_debug.cpp src/audio/audio.cpp
+SRC    := src/core/asset.cpp src/core/collision.cpp src/main.cpp src/render/framebuffer.cpp src/render/mesh.cpp src/render/pass.cpp src/render/texture.cpp src/scene/glb_loader.cpp src/scene/map.cpp src/scene/probe_grid.cpp src/scene/tri_grid.cpp src/glad.c src/physics/physics_world.cpp src/physics/physics_debug.cpp src/audio/audio.cpp src/audio/audio_events.cpp src/physics/vehicle.cpp src/scene/car_renderer.cpp
 OBJ    := $(SRC:.cpp=.o)
 OBJ    := $(OBJ:.c=.o)
 

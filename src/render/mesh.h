@@ -22,6 +22,17 @@ struct Material {
     float     occlusionStrength = 1.f;
 
     bool doubleSided = false;
+
+    // Set by post-load fixup code for asset-specific problems.
+    // When ignoreMR is true, the shader treats uHasMR as 0 and uses only
+    // the metallicFactor/roughnessFactor scalars. Used for models whose
+    // "metallicRoughness" texture is really a specular map from the old
+    // spec/gloss workflow.
+    bool ignoreMR = false;
+
+    // When true, alphaMode: BLEND is treated as OPAQUE. The deferred
+    // pipeline has no transparency pass; forcing opaque avoids black holes.
+    bool forceOpaque = false;
 };
 
 struct Vertex { glm::vec3 pos; glm::vec3 nrm; glm::vec2 uv; 

@@ -11,6 +11,33 @@
 using namespace glm;
 
 
+// Compute per-vertex normals by averaging face normals. Used when the
+// source model has no NORMAL attribute (common for older glTF exports,
+// including some Blender and older Sketchfab pipelines).
+static void computeNormals(std::vector<Vertex>& verts,
+                           const std::vector<uint32_t>& indices) {
+    for (auto& v : verts) v.nrm = glm::vec3(0.f);
+
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        uint32_t i0 = indices[i], i1 = indices[i+1], i2 = indices[i+2];
+        const glm::vec3& a = verts[i0].pos;
+        const glm::vec3& b = verts[i1].pos;
+        const glm::vec3& c = verts[i2].pos;
+        glm::vec3 fn = glm::cross(b - a, c - a);
+        // Accumulate unnormalized — larger triangles contribute more,
+        // which is the conventional choice.
+        verts[i0].nrm += fn;
+        verts[i1].nrm += fn;
+        verts[i2].nrm += fn;
+    }
+
+    for (auto& v : verts) {
+        float len2 = glm::dot(v.nrm, v.nrm);
+        v.nrm = (len2 > 1e-12f) ? v.nrm * glm::inversesqrt(len2)
+                                : glm::vec3(0.f, 1.f, 0.f);
+    }
+}
+
 // Compute per-vertex tangents from positions + UVs. Standard technique:
 // for each triangle, build the TBN matrix from the UV gradient, accumulate
 // per vertex, then orthonormalize against the vertex normal.
@@ -179,6 +206,10 @@ std::vector<GLBMesh> loadGLB(const std::string& path) {
     tinygltf::TinyGLTF loader;
     std::string err, warn;
 
+    // glTF stores image rows top-to-bottom; OpenGL wants bottom-up.
+    // Flip on decode so glTF UVs sample the intended texel.
+    stbi_set_flip_vertically_on_load(1);
+
     bool ok = loader.LoadBinaryFromFile(&model, &err, &warn, path);
     if (!warn.empty()) std::cerr << "glTF warn: " << warn << "\n";
     if (!ok) { std::cerr << "glTF error: " << err << "\n"; return {}; }
@@ -279,6 +310,38 @@ std::vector<GLBMesh> loadGLB(const std::string& path) {
                 v.uv  = i < uvs.size()     ? uvs[i]     : vec2(0);
                 v.tangent = i < tangents.size() ? tangents[i] : vec4(0,0,0,1);
                 verts.push_back(v);
+            }
+
+            // Detect reversed winding (common for 3DS Max exports).
+            // Signed volume of the triangle soup: positive if CCW-out,
+            // negative if CW-out. Only meaningful for closed-ish shells,
+            // but a car body is closed enough for the sign to be right.
+            bool windingCW = false;
+            {
+                double vol = 0.0;
+                for (size_t k = 0; k + 2 < indices.size(); k += 3) {
+                    const glm::vec3& a = verts[indices[k+0]].pos;
+                    const glm::vec3& b = verts[indices[k+1]].pos;
+                    const glm::vec3& c = verts[indices[k+2]].pos;
+                    vol += glm::dot(a, glm::cross(b, c));
+                }
+                windingCW = (vol < 0.0);
+            }
+
+            // If the source mesh is CW-wound (3DS Max default), reverse
+            // every triangle now. Downstream code — normal computation,
+            // tangent computation, glFrontFace(GL_CCW) at draw time —
+            // then works without per-mesh special cases.
+            if (windingCW) {
+                for (size_t k = 0; k + 2 < indices.size(); k += 3) {
+                    std::swap(indices[k + 1], indices[k + 2]);
+                }
+                windingCW = false;
+            }
+
+            // Fallback: if the model didn't provide normals, compute them.
+            if (normals.empty()) {
+                computeNormals(verts, indices);
             }
 
             // Fallback: if the model didn't provide tangents, compute them.
