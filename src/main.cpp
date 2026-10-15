@@ -22,6 +22,7 @@
 #include "collider.h"
 #include "controller.h"
 #include "physics_world.h"
+#include "physics_debug.h"
 #include "fixed_step.h"
 
 #include <vector>
@@ -103,6 +104,7 @@ struct Input {
     float dx = 0, dy = 0;
     bool w = false, a = false, s = false, d = false;
     bool shift = false;
+    bool debugPhysics = false;
 };
 static Input gInput;
 
@@ -115,6 +117,7 @@ static void key_cb(GLFWwindow*, int key, int, int action, int) {
     if (key == GLFW_KEY_S) gInput.s = down;
     if (key == GLFW_KEY_D) gInput.d = down;
     if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) gInput.shift = down;
+    if (key == GLFW_KEY_P && action == GLFW_PRESS) gInput.debugPhysics = !gInput.debugPhysics;
 }
 
 static void mouse_cb(GLFWwindow*, double x, double y) {
@@ -214,6 +217,9 @@ int main() {
     // ---------- Physics ----------
     PhysicsWorld physics;
     physics.init();
+    PhysicsDebugDraw physDebug;
+    physDebug.init();
+    physics.world()->setDebugDrawer(&physDebug);
     FixedStep fixed;
 
     {
@@ -984,6 +990,17 @@ int main() {
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
 
+        // ---------- Physics debug overlay ----------
+        // Drawn directly to the backbuffer after tonemap, so lines are
+        // 1-pixel sharp and not smeared by TAA.
+        if (gInput.debugPhysics) {
+            glDisable(GL_DEPTH_TEST);
+            physDebug.begin();
+            physics.world()->debugDrawWorld();
+            physDebug.flush(viewProj);
+            glEnable(GL_DEPTH_TEST);
+        }
+
         taaPing = 1 - taaPing;
         prevViewProj = viewProj;
         frameIndex++;
@@ -1007,6 +1024,8 @@ int main() {
     if (ssrFB.fbo) fb_destroy(&ssrFB);
     if (ssrCompositeFB.fbo) fb_destroy(&ssrCompositeFB);
 
+    physDebug.shutdown();
+    physDebug.shutdown();
     physics.shutdown();
 
     glfwDestroyWindow(win);
