@@ -23,6 +23,7 @@
 #include "controller.h"
 #include "physics_world.h"
 #include "physics_debug.h"
+#include "audio.h"
 #include "transform.h"
 #include "fixed_step.h"
 
@@ -106,6 +107,7 @@ struct Input {
     bool w = false, a = false, s = false, d = false;
     bool shift = false;
     bool debugPhysics = false;
+    bool playBeep = false;
 };
 static Input gInput;
 
@@ -119,6 +121,7 @@ static void key_cb(GLFWwindow*, int key, int, int action, int) {
     if (key == GLFW_KEY_D) gInput.d = down;
     if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) gInput.shift = down;
     if (key == GLFW_KEY_P && action == GLFW_PRESS) gInput.debugPhysics = !gInput.debugPhysics;
+    if (key == GLFW_KEY_F && action == GLFW_PRESS) gInput.playBeep = true;
 }
 
 static void mouse_cb(GLFWwindow*, double x, double y) {
@@ -222,6 +225,9 @@ int main() {
     physDebug.init();
     physics.world()->setDebugDrawer(&physDebug);
     FixedStep fixed;
+
+    Audio audio;
+    audio.init();
 
     // Dynamic test box. Falls under gravity and lands on the floor slab.
     // Its transform is read each frame and drawn with the instanced cubes.
@@ -570,6 +576,12 @@ int main() {
         }
         if (player.grounded && vy < 0.f) vy = 0.f;
         cam.pos = player.eye();
+        audio.setListener(cam.pos, cam.forward(), glm::vec3(0,1,0));
+
+        if (gInput.playBeep) {
+            gInput.playBeep = false;
+            audio.play3d("assets/beep.wav", cam.pos + cam.forward() * 2.0f);
+        }
 
         // ---------- Window size ----------
         int fbw, fbh;
@@ -1049,6 +1061,7 @@ int main() {
     if (ssrCompositeFB.fbo) fb_destroy(&ssrCompositeFB);
 
     physDebug.shutdown();
+    audio.shutdown();
     physDebug.shutdown();
     physics.shutdown();
 
