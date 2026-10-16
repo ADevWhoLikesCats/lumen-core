@@ -1,0 +1,230 @@
+#include "vehicle.h"
+#include "physics_world.h"
+#include "transform.h"
+
+#ifdef LUMEN_HAVE_BULLET
+
+#include <cstdio>
+#include <cmath>
+#include <algorithm>
+
+bool Vehicle::init(PhysicsWorld* phys, const glm::mat4& spawnXf, const Config& cfg)
+{
+    m_phys = phys;
+    m_cfg  = cfg;
+
+    // ---- Collision shape: chassis box + skid plate ----
+    btCompoundShape* compound = new btCompoundShape();
+
+    btBoxShape* box = new btBoxShape(btVector3(
+        cfg.halfExtents.x, cfg.halfExtents.y, cfg.halfExtents.z));
+    btTransform boxT;
+    boxT.setIdentity();
+    boxT.setOrigin(btVector3(cfg.bodyCenterLocal.x,
+                             cfg.bodyCenterLocal.y,
+                             cfg.bodyCenterLocal.z));
+    compound->addChildShape(boxT, box);
+
+    // Skid plate: bottom at the lowest wheel bottom. This is what the
+    // chassis rests on and collides with ramps against.
+    float lowest = cfg.wheelCenters[0].y - cfg.wheelRadii[0];
+    for (int i = 1; i < 4; ++i)
+        lowest = std::min(lowest, cfg.wheelCenters[i].y - cfg.wheelRadii[i]);
+
+    glm::vec3 wmin = cfg.wheelCenters[0], wmax = cfg.wheelCenters[0];
+    for (int i = 1; i < 4; ++i) {
+        wmin = glm::min(wmin, cfg.wheelCenters[i]);
+        wmax = glm::max(wmax, cfg.wheelCenters[i]);
+    }
+    glm::vec3 plateHalf(
+        (wmax.x - wmin.x) * 0.5f + 0.10f,
+        0.05f,
+        (wmax.z - wmin.z) * 0.5f + 0.10f);
+    glm::vec3 plateC = (wmin + wmax) * 0.5f;
+    plateC.y = lowest + plateHalf.y;
+
+    btBoxShape* plate = new btBoxShape(
+        btVector3(plateHalf.x, plateHalf.y, plateHalf.z));
+    btTransform plateT;
+    plateT.setIdentity();
+    plateT.setOrigin(btVector3(plateC.x, plateC.y, plateC.z));
+    compound->addChildShape(plateT, plate);
+
+    m_shape = compound;
+
+    // ---- Kinematic rigid body ----
+    glm::vec3 startPos(spawnXf[3]);
+    m_pos = startPos;
+    m_yaw = 0.f;
+    m_speed = 0.f;
+    m_velDir = glm::vec3(0.f, 0.f, 1.f);   // face +Z at spawn
+
+    btTransform t0;
+    t0.setIdentity();
+    t0.setOrigin(btVector3(m_pos.x, m_pos.y, m_pos.z));
+
+    btDefaultMotionState* motion = new btDefaultMotionState(t0);
+    btVector3 inertia(0, 0, 0);
+    m_shape->calculateLocalInertia(cfg.mass, inertia);
+    btRigidBody::btRigidBodyConstructionInfo ci(
+        cfg.mass, motion, m_shape, inertia);
+    m_chassis = new btRigidBody(ci);
+
+    // Dynamic body: no kinematic flag.
+    m_chassis->setActivationState(DISABLE_DEACTIVATION);
+
+    phys->world()->addRigidBody(m_chassis);
+
+    std::fprintf(stderr, "[vehicle] kinematic chassis, spawn=(%.2f %.2f %.2f)\n",
+                 m_pos.x, m_pos.y, m_pos.z);
+    return true;
+}
+
+void Vehicle::shutdown() {
+    m_chassis = nullptr;
+    m_shape = nullptr;
+}
+
+void Vehicle::setInput(float throttle, float steering, float brake) {
+    m_throttle = std::max(-1.f, std::min(1.f, throttle));
+    m_steering = std::max(-1.f, std::min(1.f, steering));
+    m_brake    = std::max(0.f,  std::min(1.f, brake));
+}
+
+void Vehicle::update(float dt) {
+    if (!m_chassis) return;
+
+    if (m_throttle != 0.f || m_steering != 0.f || m_brake != 0.f)
+        m_chassis->activate();
+
+    // ---- Read state from the body ----
+    // Physics owns the transform entirely. We only read it to know
+    // which way the car is currently pointing, and to sync our own
+    // m_yaw / m_speed / m_vy for rendering and input.
+    btTransform tr;
+    m_chassis->getMotionState()->getWorldTransform(tr);
+
+    glm::vec3 pos(tr.getOrigin().x(), tr.getOrigin().y(), tr.getOrigin().z());
+    m_pos = pos;
+
+    // Car's forward is +Z in mesh-local space, projected onto the
+    // world XZ plane so we measure horizontal speed only.
+    btVector3 fwdBt = tr.getBasis() * btVector3(0.f, 0.f, 1.f);
+    fwdBt.setY(0.f);
+    if (fwdBt.length2() > 1e-6f) fwdBt.normalize();
+    glm::vec3 forward(fwdBt.x(), 0.f, fwdBt.z());
+
+    btVector3 vel = m_chassis->getLinearVelocity();
+    m_speed = vel.x() * forward.x + vel.z() * forward.z;
+    m_vy    = vel.y();
+    m_yaw   = std::atan2(forward.x, forward.z);
+
+    // ---- Throttle / brake: compute a target forward speed ----
+    float target = m_speed;
+    if (m_brake > 0.f) {
+        float decel = m_cfg.brakeDecel * m_brake * dt;
+        if (target > 0.f)      target = std::max(0.f, target - decel);
+        else if (target < 0.f) target = std::min(0.f, target + decel);
+    } else if (m_throttle > 0.f) {
+        target += m_cfg.accel * m_throttle * dt;
+        if (target > m_cfg.maxSpeed) target = m_cfg.maxSpeed;
+    } else if (m_throttle < 0.f) {
+        if (target > 0.5f) {
+            target -= m_cfg.brakeDecel * dt;
+            if (target < 0.f) target = 0.f;
+        } else {
+            target -= m_cfg.accel * 0.4f * dt;
+            if (target < -m_cfg.maxReverse) target = -m_cfg.maxReverse;
+        }
+    } else {
+        if (target > 0.f)      target = std::max(0.f, target - m_cfg.coastDrag * dt);
+        else if (target < 0.f) target = std::min(0.f, target + m_cfg.coastDrag * dt);
+    }
+
+    // ---- Steering: compute a target yaw rate ----
+    float speedAbs = std::abs(m_speed);
+    float authority = 0.f;
+    if (speedAbs > m_cfg.steerLowSpeed) {
+        float range = std::max(0.001f,
+            m_cfg.steerFullSpeed - m_cfg.steerLowSpeed);
+        authority = std::min(
+            (speedAbs - m_cfg.steerLowSpeed) / range, 1.f);
+    }
+    float dir = (m_speed >= 0.f) ? 1.f : -1.f;
+    float yawTarget = m_steering * m_cfg.maxYawRate * authority * dir;
+
+    // ---- Apply velocity: preserve lateral, let physics own the rest ----
+    // Decompose existing velocity into forward + lateral. Adjust
+    // forward from throttle/brake, damp lateral with grip, preserve Y.
+    // Recompose. Physics can still push us around in every axis
+    // (gravity, ramps), but we don't kill sideways motion abruptly —
+    // grip does it over time. This is what stops the yaw oscillation
+    // on ramps.
+    btVector3 rightBt = tr.getBasis() * btVector3(1.f, 0.f, 0.f);
+    rightBt.setY(0.f);
+    if (rightBt.length2() > 1e-6f) rightBt.normalize();
+
+    float vFwd = vel.x() * forward.x + vel.z() * forward.z;
+    float vLat = vel.x() * rightBt.x() + vel.z() * rightBt.z();
+
+    // Use `target` as the new forward speed (already computed above).
+    vFwd = target;
+
+    // Kill a fraction of the lateral velocity.
+    vLat *= (1.f - m_cfg.grip);
+
+    btVector3 newLin(
+        forward.x * vFwd + rightBt.x() * vLat,
+        vel.y(),
+        forward.z * vFwd + rightBt.z() * vLat);
+    m_chassis->setLinearVelocity(newLin);
+
+    // Angular: set yaw target, preserve pitch/roll from physics.
+    btVector3 av = m_chassis->getAngularVelocity();
+    av.setY(yawTarget);
+    m_chassis->setAngularVelocity(av);
+
+    // DBG-AV
+    static int dbgAv = 0;
+    if ((dbgAv++ % 30) == 0) {
+        btVector3 avNow = m_chassis->getAngularVelocity();
+        btVector3 carUp = tr.getBasis() * btVector3(0.f, 1.f, 0.f);
+        btVector3 carFwd = tr.getBasis() * btVector3(0.f, 0.f, 1.f);
+        std::fprintf(stderr,
+            "[av] pos=(%.1f,%.1f,%.1f) vel=(%.1f,%.1f,%.1f) "
+            "angVel=(%.2f,%.2f,%.2f) "
+            "up.y=%.2f fwd.y=%.2f vy=%.2f\n",
+            m_pos.x, m_pos.y, m_pos.z,
+            vel.x(), vel.y(), vel.z(),
+            avNow.x(), avNow.y(), avNow.z(),
+            carUp.y(), carFwd.y(), m_vy);
+    }
+
+    // ---- Wheel spin visual ----
+    m_wheelSpin += (m_speed / std::max(m_cfg.wheelRadii[0], 0.05f)) * dt;
+    while (m_wheelSpin >  6.2831853f) m_wheelSpin -= 6.2831853f;
+    while (m_wheelSpin < -6.2831853f) m_wheelSpin += 6.2831853f;
+}
+
+glm::mat4 Vehicle::chassisTransform() const {
+    glm::mat4 M(1.f);
+    M = glm::translate(M, m_pos);
+    M = glm::rotate(M, m_yaw, glm::vec3(0, 1, 0));
+    return M;
+}
+
+glm::mat4 Vehicle::wheelTransform(int i) const {
+    if (i < 0 || i >= 4) return glm::mat4(1.f);
+
+    glm::mat4 chassis = chassisTransform();
+
+    const glm::vec3& c = m_cfg.wheelCenters[i];
+    glm::mat4 toCenter = glm::translate(glm::mat4(1.f),  c);
+    glm::mat4 toOrigin = glm::translate(glm::mat4(1.f), -c);
+    glm::mat4 spin     = glm::rotate(glm::mat4(1.f), m_wheelSpin,
+                                     glm::vec3(1.f, 0.f, 0.f));
+
+    return chassis * toCenter * spin * toOrigin;
+}
+
+#endif

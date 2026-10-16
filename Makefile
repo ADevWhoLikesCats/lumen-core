@@ -21,7 +21,7 @@ SRC    := src/core/asset.cpp src/core/collision.cpp src/main.cpp src/render/fram
 OBJ    := $(SRC:.cpp=.o)
 OBJ    := $(OBJ:.c=.o)
 
-TARGET := lumen
+TARGET := photonix
 
 # -------- rules --------
 .PHONY: all clean run debug

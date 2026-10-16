@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(lumen-core CXX C)
+project(photonix CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,12 +38,12 @@ file(GLOB_RECURSE LUMEN_SRC
 # Don't pick up backups or editor droppings.
 list(FILTER LUMEN_SRC EXCLUDE REGEX "\\.(bak|broken|orig|swp)$")
 
-add_executable(lumen ${LUMEN_SRC})
+add_executable(photonix ${LUMEN_SRC})
 
 # ---------------------------------------------------------------
 # Include paths
 # ---------------------------------------------------------------
-target_include_directories(lumen PRIVATE
+target_include_directories(photonix PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/include/stb
     ${CMAKE_SOURCE_DIR}/src
@@ -57,14 +57,14 @@ target_include_directories(lumen PRIVATE
 # ---------------------------------------------------------------
 # Link
 # ---------------------------------------------------------------
-target_link_libraries(lumen PRIVATE
+target_link_libraries(photonix PRIVATE
     OpenGL::GL
     glfw
 )
 
 if(Bullet_FOUND)
-    target_compile_definitions(lumen PRIVATE LUMEN_HAVE_BULLET=1)
-    target_link_libraries(lumen PRIVATE
+    target_compile_definitions(photonix PRIVATE LUMEN_HAVE_BULLET=1)
+    target_link_libraries(photonix PRIVATE
         BulletDynamics
         BulletCollision
         LinearMath
@@ -73,27 +73,27 @@ endif()
 
 # miniaudio is header-only; we'll define the implementation once in audio.cpp.
 # Harmless to define now even if no file uses it yet.
-# target_compile_definitions(lumen PRIVATE MINIAUDIO_IMPLEMENTATION=1)
+# target_compile_definitions(photonix PRIVATE MINIAUDIO_IMPLEMENTATION=1)
 
 # ---------------------------------------------------------------
 # Platform extras
 # ---------------------------------------------------------------
 if(APPLE)
-    target_link_libraries(lumen PRIVATE
+    target_link_libraries(photonix PRIVATE
         "-framework Cocoa"
         "-framework OpenGL"
         "-framework IOKit"
         "-framework CoreVideo"
     )
 elseif(WIN32)
-    target_link_libraries(lumen PRIVATE opengl32)
+    target_link_libraries(photonix PRIVATE opengl32)
 endif()
 
 # ---------------------------------------------------------------
 # Warnings — match the Makefile
 # ---------------------------------------------------------------
 if(MSVC)
-    target_compile_options(lumen PRIVATE /W3)
+    target_compile_options(photonix PRIVATE /W3)
 else()
-    target_compile_options(lumen PRIVATE -Wall -Wextra)
+    target_compile_options(photonix PRIVATE -Wall -Wextra)
 endif()

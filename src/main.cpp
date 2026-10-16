@@ -222,7 +222,7 @@ int main() {
 #endif
     glfwWindowHint(GLFW_SAMPLES, 0);   // deferred: MSAA off, TAA comes later
 
-    GLFWwindow* win = glfwCreateWindow(1280, 720, "lumen-engine", nullptr, nullptr);
+    GLFWwindow* win = glfwCreateWindow(1280, 720, "Photonix", nullptr, nullptr);
     if (!win) { std::cerr << "Window creation failed\n"; return 1; }
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
@@ -350,22 +350,42 @@ int main() {
       * glm::scale(glm::mat4(1.f), glm::vec3(1000.f, 1.f, 1000.f)),
         glm::vec3(0.35f, 0.35f, 0.37f), nullptr, {1.f, 1.f}, 0.f);
 
-    // One ramp, hardcoded. Thin in Y, long in Z, tilted about X.
-    // At 12 degrees over a 6m length, the +Z end rises by 0.62m.
-    // Centre at (0, 0.87, 40) puts the low edge at ground level.
+    // ---------- Procedurally generated ramp field ----------
+    // Ramps placed in a grid along +Z, at varying X offsets and angles.
+    // All buried at y = -0.7 so the low edge is safely underground and
+    // the car transitions onto the slope with no bump.
     {
-        glm::mat4 m =
-              glm::translate(glm::mat4(1.f), glm::vec3(0.f, 0.72f, 40.f))
-            * glm::rotate(glm::mat4(1.f), glm::radians(12.f),
-                          glm::vec3(1.f, 0.f, 0.f))
-            * glm::scale(glm::mat4(1.f), glm::vec3(8.f, 0.5f, 8.f));
+        std::mt19937 rng(0xC0FFEE);   // deterministic seed
+        std::uniform_real_distribution<float> xOff  (-6.f, 6.f);
+        std::uniform_real_distribution<float> angle ( 8.f, 22.f);
+        std::uniform_real_distribution<float> width ( 5.f, 9.f);
+        std::uniform_real_distribution<float> length( 5.f, 9.f);
 
-        add(cube, m, glm::vec3(0.42f, 0.42f, 0.44f),
-            nullptr, glm::vec2(1.f), 0.f);
-        physics.addStaticOBB(OBB::fromMatrix(m, glm::vec3(0.5f)));
+        const float rampY = -0.7f;
+        int rampIndex = 0;
 
-        std::fprintf(stderr,
-            "[ramp] (0, 0.72, 40) angle=12 size=(8,0.5,8)\n");
+        for (int i = 0; i < 12; ++i) {
+            float z = 25.f + i * 25.f;                 // every 25m
+            float x = xOff(rng);
+            float a = angle(rng);                      // degrees
+            float w = width(rng);                      // full width
+            float l = length(rng);                     // full length
+
+            glm::mat4 m =
+                  glm::translate(glm::mat4(1.f), glm::vec3(x, rampY, z))
+                * glm::rotate(glm::mat4(1.f), glm::radians(a),
+                              glm::vec3(1.f, 0.f, 0.f))
+                * glm::scale(glm::mat4(1.f),
+                             glm::vec3(w, 0.5f, l));
+
+            add(cube, m, glm::vec3(0.42f, 0.42f, 0.44f),
+                nullptr, glm::vec2(1.f), 0.f);
+            physics.addStaticOBB(OBB::fromMatrix(m, glm::vec3(0.5f)));
+
+            std::fprintf(stderr,
+                "[ramp %2d] pos=(%+5.1f, %.2f, %5.1f) angle=%.0f w=%.1f l=%.1f\n",
+                rampIndex++, x, rampY, z, a, w, l);
+        }
     }
     // Floor (textured, big quad)
     // Walls
