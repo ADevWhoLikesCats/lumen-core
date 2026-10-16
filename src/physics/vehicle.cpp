@@ -94,20 +94,39 @@ void Vehicle::setInput(float throttle, float steering, float brake) {
 void Vehicle::update(float dt) {
     if (!m_chassis) return;
 
-    // ---- Read state that physics now owns ----
-    // The body is dynamic; gravity, ramps, and collisions move it.
-    // We read its Y position and velocity each frame so m_pos stays
-    // in sync, but keep driving X, Z, and yaw ourselves.
-    {
-        btTransform physT;
-        m_chassis->getMotionState()->getWorldTransform(physT);
-        m_pos.y = physT.getOrigin().y();
-        m_vy = m_chassis->getLinearVelocity().y();
-    }
+    // ---- Read all state from the physics body ----
+    // The body is dynamic. We never integrate position ourselves; we
+    // only set its velocity and read the result. This lets physics
+    // handle gravity, ramps, jumps, and wall collisions.
+    btTransform physT;
+    m_chassis->getMotionState()->getWorldTransform(physT);
 
-    // ---- Longitudinal: throttle, brake, drag ----
+    glm::vec3 pos = btToGlm(physT)[3];
+    m_pos = pos;
+    m_vy  = m_chassis->getLinearVelocity().y();
+
+    // Car's forward is +Z in mesh-local space.
+    btVector3 fwdBt = physT.getBasis() * btVector3(0.f, 0.f, 1.f);
+    fwdBt.setY(0.f);
+    if (fwdBt.length2() > 1e-6f) fwdBt.normalize();
+    glm::vec3 forward(fwdBt.x(), 0.f, fwdBt.z());
+
+    btVector3 rightBt = physT.getBasis() * btVector3(1.f, 0.f, 0.f);
+    rightBt.setY(0.f);
+    if (rightBt.length2() > 1e-6f) rightBt.normalize();
+    glm::vec3 right(rightBt.x(), 0.f, rightBt.z());
+
+    // Sync m_speed from the body, so drag/throttle reflect reality.
+    // (This is the piece we were missing — code thought it was going
+    // 12 m/s while the body was stopped by a ramp.)
+    btVector3 vel = m_chassis->getLinearVelocity();
+    m_speed = vel.x() * forward.x + vel.z() * forward.z;
+
+    // Steering state (m_yaw is still code-owned, from the body basis).
+    m_yaw = std::atan2(forward.x, forward.z);
+
+    // ---- Longitudinal: update m_speed ----
     if (m_brake > 0.f) {
-        // Hard stop toward zero.
         float decel = m_cfg.brakeDecel * m_brake;
         if (m_speed > 0.f)      m_speed = std::max(0.f,  m_speed - decel * dt);
         else if (m_speed < 0.f) m_speed = std::min(0.f,  m_speed + decel * dt);
@@ -115,7 +134,6 @@ void Vehicle::update(float dt) {
         m_speed += m_cfg.accel * m_throttle * dt;
         if (m_speed > m_cfg.maxSpeed) m_speed = m_cfg.maxSpeed;
     } else if (m_throttle < 0.f) {
-        // Moving forward: brake first. Otherwise, reverse.
         if (m_speed > 0.5f) {
             m_speed -= m_cfg.brakeDecel * dt;
             if (m_speed < 0.f) m_speed = 0.f;
@@ -124,13 +142,11 @@ void Vehicle::update(float dt) {
             if (m_speed < -m_cfg.maxReverse) m_speed = -m_cfg.maxReverse;
         }
     } else {
-        // Coast: drag toward zero.
         if (m_speed > 0.f)      m_speed = std::max(0.f, m_speed - m_cfg.coastDrag * dt);
         else if (m_speed < 0.f) m_speed = std::min(0.f, m_speed + m_cfg.coastDrag * dt);
     }
 
-    // ---- Steering ----
-    // Speed-gated so the car can't yaw in place.
+    // ---- Steering: update m_yaw ----
     float speedAbs = std::abs(m_speed);
     float authority = 0.f;
     if (speedAbs > m_cfg.steerLowSpeed) {
@@ -139,55 +155,20 @@ void Vehicle::update(float dt) {
         authority = std::min(
             (speedAbs - m_cfg.steerLowSpeed) / range, 1.f);
     }
-
-    // Reverse steers the other way.
     float dir = (m_speed >= 0.f) ? 1.f : -1.f;
-    float yawRate =  m_steering * m_cfg.maxYawRate * authority * dir;
+    float yawRate = m_steering * m_cfg.maxYawRate * authority * dir;
     m_yaw += yawRate * dt;
 
-    // ---- Drift: velocity direction lags behind facing ----
-    glm::vec3 forward(std::sin(m_yaw), 0.f, std::cos(m_yaw));
-
-    // Only blend velocity direction when moving. At near-zero speed there's
-    // no meaningful direction, and blending would produce jitter.
-    if (std::abs(m_speed) > 0.5f) {
-        // Lerp velocity direction toward facing. Bigger grip => snappier.
-        // grip * dt, capped at 1.0 so a single step can't over-rotate.
-        float a = std::min(1.f, m_cfg.grip * dt * 60.f);
-
-        // Reverse case: if speed is negative, we're travelling backward,
-        // so the target direction is -forward.
-        glm::vec3 target = (m_speed >= 0.f) ? forward : -forward;
-
-        glm::vec3 blended = glm::mix(m_velDir, target, a);
-        float len = glm::length(blended);
-        if (len > 1e-4f) m_velDir = blended / len;
-    } else {
-        // Stopped: face where we're pointing.
-        m_velDir = (m_speed >= 0.f) ? forward : -forward;
-    }
-
-    // ---- Integrate position along velocity direction ----
-    m_pos += m_velDir * m_speed * dt;
-
-    // ---- Push new transform into the physics body ----
-    btTransform t;
-    t.setIdentity();
-    t.setOrigin(btVector3(m_pos.x, m_pos.y, m_pos.z));
-    btQuaternion q(btVector3(0, 1, 0), m_yaw);
-    t.setRotation(q);
-
-    m_chassis->setWorldTransform(t);
-    m_chassis->getMotionState()->setWorldTransform(t);
-
-    // Also set the body's velocity so the solver sees a moving body.
-    m_chassis->setLinearVelocity(
-        btVector3(m_velDir.x * m_speed, 0.f, m_velDir.z * m_speed));
-
-    // Expose the actual travel velocity to the physics body so collisions
-    // with ramps interact correctly.
-    m_chassis->setLinearVelocity(
-        btVector3(m_velDir.x * m_speed, 0.f, m_velDir.z * m_speed));
+    // ---- Set the body's velocity, not its transform ----
+    // Physics integrates. If a ramp pushes us up, it stays. If a wall
+    // stops us, m_speed reads back as ~0 next frame.
+    glm::vec3 newForward(std::sin(m_yaw), 0.f, std::cos(m_yaw));
+    float preservedVy = m_chassis->getLinearVelocity().y();
+    m_chassis->setLinearVelocity(btVector3(
+        newForward.x * m_speed,
+        preservedVy,
+        newForward.z * m_speed));
+    m_chassis->setAngularVelocity(btVector3(0.f, yawRate, 0.f));
 
     // ---- Wheel spin visual ----
     m_wheelSpin += (m_speed / std::max(m_cfg.wheelRadii[0], 0.05f)) * dt;

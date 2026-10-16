@@ -19,6 +19,7 @@ public:
         glm::vec3 bodyCenterLocal{0.f};             // box offset in mesh space
         glm::vec3 wheelCenters[4]{};                 // mesh-space wheel pivots
         float     wheelRadii[4]{};
+        float     mass = 1500.f;
 
         // Handling tunables
         float maxSpeed       = 40.f;   // m/s forward
