@@ -350,44 +350,21 @@ int main() {
       * glm::scale(glm::mat4(1.f), glm::vec3(1000.f, 1.f, 1000.f)),
         glm::vec3(0.35f, 0.35f, 0.37f), nullptr, {1.f, 1.f}, 0.f);
 
-    // Ramps: flat boxes rotated to rise along their local +Z, then
-    // yawed so they can face any direction. Y is computed so the low
-    // end touches y=0.
-    //
-    //   halfXZ    = (half-width, half-length) in metres
-    //   thickness = half-thickness
-    //   angleDeg  = rise angle; positive lifts the +Z end
-    //   yawDeg    = direction the ramp rises toward (0 = +Z, 90 = +X)
-    auto addRamp = [&](glm::vec2 xzPos, glm::vec2 halfXZ,
-                       float thickness, float angleDeg, float yawDeg) {
-        // Distance from ramp centre to its low corner in the local Y
-        // direction: half-length * sin(angle) + half-thickness * cos(angle)
-        float rise = halfXZ.y * std::sin(glm::radians(angleDeg))
-                   + thickness  * std::cos(glm::radians(angleDeg));
-        // Lift the centre so the low end is exactly at ground level.
-        glm::vec3 centre(xzPos.x, rise, xzPos.y);
-
-        glm::mat4 m =
-              glm::translate(glm::mat4(1.f), centre)
-            * glm::rotate(glm::mat4(1.f), glm::radians(yawDeg),
-                          glm::vec3(0.f, 1.f, 0.f))
-            * glm::rotate(glm::mat4(1.f), glm::radians(angleDeg),
-                          glm::vec3(1.f, 0.f, 0.f))
-            * glm::scale(glm::mat4(1.f),
-                         glm::vec3(halfXZ.x * 2.f,
-                                   thickness  * 2.f,
-                                   halfXZ.y   * 2.f));
-
-        add(cube, m, glm::vec3(0.42f, 0.42f, 0.44f),
-            nullptr, glm::vec2(1.f), 0.f);
+    // Ramps: rotated boxes.
+    auto addRamp = [&](glm::vec3 centre, glm::vec3 size, float angleDeg) {
+        glm::mat4 m = glm::translate(glm::mat4(1.f), centre)
+                    * glm::rotate(glm::mat4(1.f), glm::radians(angleDeg),
+                                  glm::vec3(1.f, 0.f, 0.f))
+                    * glm::scale(glm::mat4(1.f), size * 2.f);
+        add(cube, m, glm::vec3(0.42f, 0.42f, 0.44f), nullptr, {1.f, 1.f}, 0.f);
         physics.addStaticOBB(OBB::fromMatrix(m, glm::vec3(0.5f)));
     };
 
-    // Three ramps ahead along +Z (car spawns facing +Z), one to the side.
-    addRamp(glm::vec2(  0.f, 20.f), glm::vec2(4.f, 6.f), 0.25f, 20.f,   0.f);
-    addRamp(glm::vec2(  0.f, 45.f), glm::vec2(4.f, 6.f), 0.25f, 30.f,   0.f);
-    addRamp(glm::vec2(  0.f, 75.f), glm::vec2(4.f, 8.f), 0.25f, 40.f,   0.f);
-    addRamp(glm::vec2(-18.f,  0.f), glm::vec2(4.f, 6.f), 0.25f, 25.f,  90.f);
+    // Four ramps: two along X, two along Z.
+    addRamp(glm::vec3( 10.f, 1.0f,   0.f), glm::vec3(3.f, 3.f, 0.25f),  20.f);
+    addRamp(glm::vec3(-10.f, 1.0f,   0.f), glm::vec3(3.f, 3.f, 0.25f), -20.f);
+    addRamp(glm::vec3(  0.f, 1.0f,  15.f), glm::vec3(3.f, 3.f, 0.25f),  15.f);
+    addRamp(glm::vec3(  0.f, 1.0f, -15.f), glm::vec3(3.f, 3.f, 0.25f), -15.f);
 
     // Floor (textured, big quad)
     // Walls
