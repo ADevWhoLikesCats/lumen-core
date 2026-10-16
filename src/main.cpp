@@ -350,22 +350,23 @@ int main() {
       * glm::scale(glm::mat4(1.f), glm::vec3(1000.f, 1.f, 1000.f)),
         glm::vec3(0.35f, 0.35f, 0.37f), nullptr, {1.f, 1.f}, 0.f);
 
-    // Ramps: rotated boxes.
-    auto addRamp = [&](glm::vec3 centre, glm::vec3 size, float angleDeg) {
-        glm::mat4 m = glm::translate(glm::mat4(1.f), centre)
-                    * glm::rotate(glm::mat4(1.f), glm::radians(angleDeg),
-                                  glm::vec3(1.f, 0.f, 0.f))
-                    * glm::scale(glm::mat4(1.f), size * 2.f);
-        add(cube, m, glm::vec3(0.42f, 0.42f, 0.44f), nullptr, {1.f, 1.f}, 0.f);
+    // One ramp, hardcoded. Thin in Y, long in Z, tilted about X.
+    // At 12 degrees over a 6m length, the +Z end rises by 0.62m.
+    // Centre at (0, 0.87, 40) puts the low edge at ground level.
+    {
+        glm::mat4 m =
+              glm::translate(glm::mat4(1.f), glm::vec3(0.f, 0.72f, 40.f))
+            * glm::rotate(glm::mat4(1.f), glm::radians(12.f),
+                          glm::vec3(1.f, 0.f, 0.f))
+            * glm::scale(glm::mat4(1.f), glm::vec3(8.f, 0.5f, 8.f));
+
+        add(cube, m, glm::vec3(0.42f, 0.42f, 0.44f),
+            nullptr, glm::vec2(1.f), 0.f);
         physics.addStaticOBB(OBB::fromMatrix(m, glm::vec3(0.5f)));
-    };
 
-    // Four ramps: two along X, two along Z.
-    addRamp(glm::vec3( 10.f, 1.0f,   0.f), glm::vec3(3.f, 3.f, 0.25f),  20.f);
-    addRamp(glm::vec3(-10.f, 1.0f,   0.f), glm::vec3(3.f, 3.f, 0.25f), -20.f);
-    addRamp(glm::vec3(  0.f, 1.0f,  15.f), glm::vec3(3.f, 3.f, 0.25f),  15.f);
-    addRamp(glm::vec3(  0.f, 1.0f, -15.f), glm::vec3(3.f, 3.f, 0.25f), -15.f);
-
+        std::fprintf(stderr,
+            "[ramp] (0, 0.72, 40) angle=12 size=(8,0.5,8)\n");
+    }
     // Floor (textured, big quad)
     // Walls
     std::vector<GLBMesh> helmet = loadGLB("assets/damaged_helmet.glb");
