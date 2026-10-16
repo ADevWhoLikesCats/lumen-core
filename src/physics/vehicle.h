@@ -37,7 +37,7 @@ public:
         // Derived from mass and target acceleration:
         //   engineForce * 4 wheels = mass * targetAccel
         // 1500 kg * 6.7 m/s^2 / 4 = ~2500 N per wheel.
-        float     engineForce  = 2500.f;
+        float     engineForce  = 5000.f;
         float     brakeTorque  = 50.f;
         float     steerAngle   = 0.5f;
         bool      frontWheel[4] = { true, true, false, false };
@@ -69,6 +69,9 @@ private:
     // Cached wheel world-centres (from wheelPositions, in chassis local)
     // so we can offset the visual draw.
     glm::vec3 m_wheelDrawOffset[4];
+
+    // Per-wheel visual spin angle, accumulated from speed.
+    float m_wheelSpin = 0.f;
 
     float m_throttle = 0.f;
     float m_steering = 0.f;

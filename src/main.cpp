@@ -246,20 +246,15 @@ int main() {
 
     // ---------- Map ----------
     // Flat test map: no walls, no props, just the floor slab.
-    // generateMap is preserved but not called. Restore it later if
-    // you want the maze back.
-    GeneratedMap map;
-    map.W = 24; map.H = 24; map.tile = 4.0f;
-    map.cells.assign(map.W * map.H, MapCell{true});   // all walkable
-    map.spawn = glm::vec3(map.W*map.tile*0.5f, 1.0f, map.H*map.tile*0.5f);
-    map.floorTransform =
-        glm::translate(glm::mat4(1.f),
-                       glm::vec3(map.W*map.tile*0.5f, 0.f, map.H*map.tile*0.5f))
-      * glm::scale(glm::mat4(1.f), glm::vec3(map.W*map.tile, 1.f, map.H*map.tile));
 
     // ---------- Physics ----------
     PhysicsWorld physics;
     physics.init();
+
+    // Flat grey ground plane. Top face at y=0.
+    physics.addStaticBox(glm::vec3(500.f, 0.5f, 500.f),
+                         glm::translate(glm::mat4(1.f),
+                                        glm::vec3(0.f, -0.5f, 0.f)));
 
     // Flat test ground. A very large thin box, top at y=0.
     physics.addStaticBox(glm::vec3(500.f, 0.5f, 500.f),
@@ -286,10 +281,15 @@ int main() {
     Vehicle::Config carCfg;
     carCfg.halfExtents    = glm::vec3(1.00f, 0.45f, 2.40f);
     carCfg.bodyCenterLocal = glm::vec3(-0.195f, 0.653f, -0.270f);
-    carCfg.wheelPositions[0] = glm::vec3( 0.659f, 0.346f,  0.994f);  // FL
-    carCfg.wheelPositions[1] = glm::vec3(-1.050f, 0.346f,  0.994f);  // FR
-    carCfg.wheelPositions[2] = glm::vec3( 0.659f, 0.364f, -1.755f);  // RL
-    carCfg.wheelPositions[3] = glm::vec3(-1.050f, 0.364f, -1.755f);  // RR
+    // Connection points = wheel centre + suspension rest length.
+    // The wheel CENTRE lives at y=0.346/0.364 in the mesh; the suspension
+    // attaches above it. Setting connection = wheel centre pulls the wheel
+    // down by the rest length, so the car "droops".
+    const float SUS_REST = 0.30f;
+    carCfg.wheelPositions[0] = glm::vec3( 0.659f, 0.346f + SUS_REST,  0.994f);  // FL
+    carCfg.wheelPositions[1] = glm::vec3(-1.050f, 0.346f + SUS_REST,  0.994f);  // FR
+    carCfg.wheelPositions[2] = glm::vec3( 0.659f, 0.364f + SUS_REST, -1.755f);  // RL
+    carCfg.wheelPositions[3] = glm::vec3(-1.050f, 0.364f + SUS_REST, -1.755f);  // RR
     carCfg.wheelCenters[0]   = glm::vec3( 0.659f, 0.346f,  0.994f);
     carCfg.wheelCenters[1]   = glm::vec3(-1.050f, 0.346f,  0.994f);
     carCfg.wheelCenters[2]   = glm::vec3( 0.659f, 0.364f, -1.755f);
@@ -303,7 +303,7 @@ int main() {
     Vehicle car;
     // Spawn the car at world origin, 0.8m up so it drops onto the flat ground.
     glm::mat4 spawn = glm::translate(glm::mat4(1.f),
-                                     glm::vec3(0.f, 0.8f, 0.f));
+                                     glm::vec3(0.f, 1.0f, 0.f));
     car.init(&physics, spawn, carCfg);
 
     // Dynamic test box. Falls under gravity and lands on the floor slab.
@@ -312,14 +312,6 @@ int main() {
         glm::vec3(0.4f),
         glm::translate(glm::mat4(1.f), glm::vec3(48.f, 10.f, 44.f)),
         1.0f);
-
-    {
-        // Floor slab collider. Same transform as the visual floor.
-        glm::vec3 ctr(map.W*map.tile*0.5f, -0.5f, map.H*map.tile*0.5f);
-        glm::mat4 fm = glm::translate(glm::mat4(1.f), ctr)
-                     * glm::scale(glm::mat4(1.f), glm::vec3(map.W*map.tile, 1.f, map.H*map.tile));
-        physics.addStaticOBB(OBB::fromMatrix(fm, glm::vec3(0.5f)));
-    }
 
     // Scene: an Instance is mesh + transform + color + material flag
     struct Instance {
@@ -339,50 +331,30 @@ int main() {
         scene.push_back({&m, xf, c, t, uvs, mat, pbr});
     };
 
-    // Floor (textured, big quad)
-    float floorTiles = (float)map.W * 2.0f;
+    // Grey floor: one big quad, no texture.
     add(floor,
-        glm::translate(glm::mat4(1.f), glm::vec3(map.W*map.tile*0.5f, 0.f, map.H*map.tile*0.5f))
-      * glm::scale(glm::mat4(1.f), glm::vec3(map.W*map.tile, 1.f, map.H*map.tile)),
-        {1,1,1}, &floorTex, glm::vec2(floorTiles, floorTiles), 2.0f);
+        glm::translate(glm::mat4(1.f), glm::vec3(0.f))
+      * glm::scale(glm::mat4(1.f), glm::vec3(1000.f, 1.f, 1000.f)),
+        glm::vec3(0.35f, 0.35f, 0.37f), nullptr, {1.f, 1.f}, 0.f);
 
+    // Ramps: rotated boxes.
+    auto addRamp = [&](glm::vec3 centre, glm::vec3 size, float angleDeg) {
+        glm::mat4 m = glm::translate(glm::mat4(1.f), centre)
+                    * glm::rotate(glm::mat4(1.f), glm::radians(angleDeg),
+                                  glm::vec3(1.f, 0.f, 0.f))
+                    * glm::scale(glm::mat4(1.f), size * 2.f);
+        add(cube, m, glm::vec3(0.42f, 0.42f, 0.44f), nullptr, {1.f, 1.f}, 0.f);
+        physics.addStaticOBB(OBB::fromMatrix(m, glm::vec3(0.5f)));
+    };
+
+    // Four ramps: two along X, two along Z.
+    addRamp(glm::vec3( 10.f, 1.0f,   0.f), glm::vec3(3.f, 3.f, 0.25f),  20.f);
+    addRamp(glm::vec3(-10.f, 1.0f,   0.f), glm::vec3(3.f, 3.f, 0.25f), -20.f);
+    addRamp(glm::vec3(  0.f, 1.0f,  15.f), glm::vec3(3.f, 3.f, 0.25f),  15.f);
+    addRamp(glm::vec3(  0.f, 1.0f, -15.f), glm::vec3(3.f, 3.f, 0.25f), -15.f);
+
+    // Floor (textured, big quad)
     // Walls
-    for (size_t i = 0; i < map.wallTransforms.size(); ++i) {
-        add(cube, map.wallTransforms[i], {0.55f, 0.53f, 0.50f});
-        physics.addStaticOBB(map.wallColliders[i]);
-    }
-
-    // Props
-    {
-        std::mt19937 rng(1337u ^ 0x9E3779B9u);
-        std::uniform_real_distribution<float> chance(0.f, 1.f);
-        std::uniform_int_distribution<int>   kind(0, 2);
-        std::uniform_real_distribution<float> jitter(-0.15f, 0.15f);
-        for (int y = 0; y < map.H; ++y) {
-            for (int x = 0; x < map.W; ++x) {
-                if (!map.walkable(x, y)) continue;
-                if (chance(rng) > 0.15f) continue;
-                glm::vec3 c = map.cellCenter(x, y);
-                if (glm::distance(c, map.spawn) < 2.0f) continue;
-                c.x += jitter(rng);
-                c.z += jitter(rng);
-
-                glm::vec3 half, color; float mat = 0.f;
-                switch (kind(rng)) {
-                    case 0: half={0.35f,0.35f,0.35f}; color={0.62f,0.42f,0.24f}; mat=1.f; break;
-                    case 1: half={0.25f,1.00f,0.25f}; color={0.55f,0.52f,0.48f}; break;
-                    default: half={0.35f,0.50f,0.35f}; color={0.32f,0.38f,0.42f}; break;
-                }
-                glm::vec3 pos = c + glm::vec3(0, half.y, 0);
-                glm::mat4 m = glm::translate(glm::mat4(1.f), pos)
-                            * glm::scale(glm::mat4(1.f), half * 2.f);
-                add(cube, m, color, nullptr, {1,1}, mat);
-                physics.addStaticOBB(OBB::fromMatrix(m, glm::vec3(0.5f)));
-            }
-        }
-    }
-
-    // ---------- Load GLB model ----------
     std::vector<GLBMesh> helmet = loadGLB("assets/damaged_helmet.glb");
 
     // ---------- Car model ----------
@@ -474,7 +446,7 @@ int main() {
     // ---------- Per-frame state ----------
     Camera cam;
     CharacterController player;
-    player.pos = map.spawn;
+    player.pos = glm::vec3(0.f, 1.0f, -8.f);   // beside the car
     player.height = 1.7f;
     player.radius = 0.3f;
     float vy = 0.f;
@@ -616,7 +588,7 @@ int main() {
 
         // Ground plane
         {
-            glm::vec3 mn(0, 0, 0), mx(map.W*map.tile, 0, map.H*map.tile);
+            glm::vec3 mn(-50, 0, -50), mx(50, 0, 50);
             emitQuad(glm::vec3(mn.x, 0, mn.z),
                      glm::vec3(mx.x, 0, mn.z),
                      glm::vec3(mx.x, 0, mx.z),
@@ -645,11 +617,11 @@ int main() {
         }
 
         glm::vec3 gmin(0, -1, 0);
-        glm::vec3 gmax(map.W*map.tile, 4, map.H*map.tile);
+        glm::vec3 gmax(100, 4, 100);
         triGrid = tri_grid_build(triPos, triAlb, (int)(triPos.size() / 9), gmin, gmax);
 
         glm::vec3 probe_min(0, 0.5f, 0);
-        glm::vec3 probe_max(map.W*map.tile, 3.5f, map.H*map.tile);
+        glm::vec3 probe_max(100, 3.5f, 100);
         probeGrid = probe_grid_create(probe_min, probe_max);
 
         probe_grid_bake(&probeGrid, &triGrid,

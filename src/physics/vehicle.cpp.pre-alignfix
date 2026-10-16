@@ -1,0 +1,272 @@
+#include "vehicle.h"
+#include "physics_world.h"
+#include "transform.h"
+
+#ifdef LUMEN_HAVE_BULLET
+
+#include <cstdio>
+
+bool Vehicle::init(PhysicsWorld* phys, const glm::mat4& spawnXf,
+                   const Config& cfg)
+{
+    m_phys = phys;
+    m_cfg  = cfg;
+
+    // Compound shape: chassis box at bodyCenterLocal, plus four wheel
+    // spheres at wheelCenters. No vehicle constraint, no suspension.
+    // Forces are applied directly to the rigid body.
+    btCompoundShape* shape = new btCompoundShape();
+
+    // Chassis box
+    {
+        btBoxShape* box = new btBoxShape(
+            btVector3(cfg.halfExtents.x, cfg.halfExtents.y, cfg.halfExtents.z));
+        btTransform local;
+        local.setIdentity();
+        local.setOrigin(btVector3(cfg.bodyCenterLocal.x,
+                                  cfg.bodyCenterLocal.y,
+                                  cfg.bodyCenterLocal.z));
+        shape->addChildShape(local, box);
+    }
+
+    // Skid plate: one thin box whose bottom sits at the lowest wheel
+    // bottom. This is what the car rests on. Without it, the car rests
+    // on the chassis box bottom (20cm too high) and the wheels look
+    // sunk into the ground.
+    {
+        float lowestWheelBottom = 1e9f;
+        for (int i = 0; i < 4; ++i) {
+            float b = cfg.wheelCenters[i].y - cfg.wheelRadii[i];
+            if (b < lowestWheelBottom) lowestWheelBottom = b;
+        }
+
+        glm::vec3 wmin = cfg.wheelCenters[0];
+        glm::vec3 wmax = cfg.wheelCenters[0];
+        for (int i = 1; i < 4; ++i) {
+            wmin = glm::min(wmin, cfg.wheelCenters[i]);
+            wmax = glm::max(wmax, cfg.wheelCenters[i]);
+        }
+
+        glm::vec3 plateHalf(
+            (wmax.x - wmin.x) * 0.5f + 0.15f,
+            0.05f,
+            (wmax.z - wmin.z) * 0.5f + 0.15f);
+
+        glm::vec3 plateCenter = (wmin + wmax) * 0.5f;
+        plateCenter.y = lowestWheelBottom + plateHalf.y;
+
+        btBoxShape* plate = new btBoxShape(
+            btVector3(plateHalf.x, plateHalf.y, plateHalf.z));
+        btTransform plateT;
+        plateT.setIdentity();
+        plateT.setOrigin(btVector3(plateCenter.x, plateCenter.y, plateCenter.z));
+        shape->addChildShape(plateT, plate);
+
+        std::fprintf(stderr,
+            "[vehicle] skid plate bottom y=%.3f, plate half=(%.2f,%.2f,%.2f)\n",
+            lowestWheelBottom, plateHalf.x, plateHalf.y, plateHalf.z);
+    }
+
+    // No wheel spheres in the collision shape. The mesh has four wheels
+    // but the physics is a single box. Adding wheel spheres creates
+    // rolling resistance that fights the drive force.
+
+    btVector3 inertia(0, 0, 0);
+    shape->calculateLocalInertia(cfg.mass, inertia);
+
+    btTransform t0 = glmToBt(spawnXf);
+    btDefaultMotionState* motion = new btDefaultMotionState(t0);
+
+    btRigidBody::btRigidBodyConstructionInfo ci(cfg.mass, motion, shape, inertia);
+    m_chassis = new btRigidBody(ci);
+    m_chassis->setFriction(0.3f);
+    m_chassis->setRestitution(0.05f);
+    m_chassis->setDamping(0.05f, 0.4f);         // slows coasting
+    m_chassis->setAngularFactor(btVector3(0.f, 1.f, 0.f));  // no roll/pitch
+    m_chassis->setActivationState(DISABLE_DEACTIVATION);
+
+    phys->world()->addRigidBody(m_chassis);
+
+    std::fprintf(stderr, "[vehicle] arcade body mass=%.0fkg wheels=4\n",
+                 cfg.mass);
+    return true;
+}
+
+void Vehicle::shutdown() {
+    m_chassis = nullptr;   // owned by PhysicsWorld
+}
+
+void Vehicle::setInput(float throttle, float steering, float brake) {
+    m_throttle = throttle;
+    m_steering = steering;
+    m_brake    = brake;
+}
+
+void Vehicle::update(float dt) {
+    if (!m_chassis) return;
+
+    if (m_throttle != 0.f || m_steering != 0.f || m_brake != 0.f)
+        m_chassis->activate();
+
+    // ---- Read current state ----
+    btTransform tr;
+    m_chassis->getMotionState()->getWorldTransform(tr);
+
+    // Car's forward is +Z in mesh-local space.
+    btVector3 fwd = tr.getBasis() * btVector3(0.f, 0.f, 1.f);
+    fwd.setY(0.f);
+    if (fwd.length2() > 1e-6f) fwd.normalize();
+
+    btVector3 right = tr.getBasis() * btVector3(1.f, 0.f, 0.f);
+    right.setY(0.f);
+    if (right.length2() > 1e-6f) right.normalize();
+
+    btVector3 vel = m_chassis->getLinearVelocity();
+
+    // ---- Decompose velocity ----
+    float vFwd = vel.dot(fwd);
+    float vLat = vel.dot(right);
+    float vUp  = vel.y();
+
+    // ---- Longitudinal: throttle, brake, drag, clamp ----
+    const float ACCEL        = m_cfg.engineForce / m_cfg.mass * 4.f;  // m/s^2
+    const float BRAKE_DECEL  = 25.f;                                  // m/s^2
+    const float REVERSE_ACC  = ACCEL * 0.4f;
+    const float MAX_FWD      = 40.f;      // m/s, ~144 km/h
+    const float MAX_REV      = 12.f;      // m/s
+    const float DRAG         = 0.3f;      // 1/s, natural slowdown
+
+    if (m_throttle > 0.f) {
+        vFwd += ACCEL * m_throttle * dt;
+    } else if (m_throttle < 0.f) {
+        // Backward input: if moving forward, brake. If stopped, reverse.
+        if (vFwd > 0.5f) {
+            vFwd -= BRAKE_DECEL * dt;
+            if (vFwd < 0.f) vFwd = 0.f;
+        } else {
+            vFwd += -REVERSE_ACC * dt;
+        }
+    }
+
+    // Handbrake / brake input: strong deceleration toward zero.
+    if (m_brake > 0.f) {
+        float target = vFwd * (1.f - m_brake * 4.f * dt);
+        if (std::abs(target) < 0.2f) target = 0.f;
+        vFwd = target;
+    }
+
+    // Natural drag: coast down slowly.
+    vFwd -= vFwd * DRAG * dt;
+
+    // Clamp to max speeds.
+    if (vFwd >  MAX_FWD) vFwd =  MAX_FWD;
+    if (vFwd < -MAX_REV) vFwd = -MAX_REV;
+
+    // ---- Lateral grip: kill sideways slide ----
+    // This is what makes the car feel planted instead of skating.
+    // Lower = grippier. 0.08 kills 8% of lateral per step, which at
+    // 60 Hz is ~99.5% over a second.
+    const float LATERAL_GRIP = m_brake > 0.f ? 0.20f : 0.12f;
+    vLat *= std::max(0.f, 1.f - LATERAL_GRIP * dt * 60.f);
+
+    // ---- Recompose velocity ----
+    btVector3 newVel = fwd * vFwd + right * vLat;
+    newVel.setY(vUp);   // leave vertical alone (gravity, ramps)
+    m_chassis->setLinearVelocity(newVel);
+
+    // ---- Steering: yaw the body directly ----
+    // Speed-scaled so the car can't pivot on the spot, and eased off at
+    // high speed so it doesn't become twitchy.
+    const float MAX_YAW_RATE = 2.2f;   // rad/s at mid speed
+    float speedAbs = std::abs(vFwd);
+    float speedFactor = std::min(speedAbs / 8.f, 1.f);
+    // At very high speed, back off slightly for stability.
+    if (speedAbs > 25.f) speedFactor *= 0.7f;
+    if (vFwd < 0.f) speedFactor = -speedFactor;  // reverse steers the other way
+
+    float yaw = -m_steering * MAX_YAW_RATE * speedFactor * dt;
+
+    if (std::abs(yaw) > 1e-6f) {
+        btQuaternion q = tr.getRotation();
+        btQuaternion delta(btVector3(0.f, 1.f, 0.f), yaw);
+        btQuaternion newQ = delta * q;
+        newQ.normalize();
+        tr.setRotation(newQ);
+        m_chassis->setWorldTransform(tr);
+        m_chassis->getMotionState()->setWorldTransform(tr);
+    }
+
+    // CRITICAL: kill all Y angular velocity. Without this, the contact
+    // solver and any residual torque cause the car to spin like a top
+    // the moment it starts yawing. We're driving yaw directly above, so
+    // the physics engine must not add its own rotation.
+    {
+        btVector3 av = m_chassis->getAngularVelocity();
+        av.setY(0.f);
+        m_chassis->setAngularVelocity(av);
+    }
+
+    // ---- Align velocity with the new heading ----
+    // After yawing, the car's forward has changed. If we don't also
+    // steer the velocity vector, the car keeps sliding in the old
+    // direction — feels like driving on ice. Blend velocity toward
+    // the new forward, scaled by grip. Set ALIGN near 1.0 for
+    // "on rails" arcade feel.
+    {
+        btVector3 newFwd = tr.getBasis() * btVector3(0.f, 0.f, 1.f);
+        newFwd.setY(0.f);
+        if (newFwd.length2() > 1e-6f) newFwd.normalize();
+
+        btVector3 curVel = m_chassis->getLinearVelocity();
+        float speedLen = std::sqrt(curVel.x()*curVel.x()
+                                 + curVel.z()*curVel.z());
+        if (speedLen > 0.5f) {
+            // Only the horizontal component gets aligned; vertical is gravity's.
+            btVector3 horiz(curVel.x(), 0.f, curVel.z());
+            btVector3 dir = horiz / speedLen;
+
+            const float ALIGN = 0.9f;   // 0 = full drift, 1 = on rails
+            btVector3 blended = dir * (1.f - ALIGN) + newFwd * ALIGN;
+            if (blended.length2() > 1e-6f) {
+                blended.normalize();
+                m_chassis->setLinearVelocity(
+                    btVector3(blended.x() * speedLen,
+                              curVel.y(),
+                              blended.z() * speedLen));
+            }
+        }
+    }
+
+    // ---- Wheel spin visual ----
+    m_wheelSpin += (vFwd / std::max(m_cfg.wheelRadii[0], 0.05f)) * dt;
+    while (m_wheelSpin >  6.2831853f) m_wheelSpin -= 6.2831853f;
+    while (m_wheelSpin < -6.2831853f) m_wheelSpin += 6.2831853f;
+}
+
+glm::mat4 Vehicle::chassisTransform() const {
+    if (!m_chassis) return glm::mat4(1.f);
+    btTransform t;
+    m_chassis->getMotionState()->getWorldTransform(t);
+    // Physics body origin == mesh origin (see init, which uses a
+    // btCompoundShape with the box offset inside). No correction needed.
+    return btToGlm(t);
+}
+
+glm::mat4 Vehicle::wheelTransform(int i) const {
+    if (!m_chassis || i < 0 || i >= 4) return glm::mat4(1.f);
+
+    btTransform t;
+    m_chassis->getMotionState()->getWorldTransform(t);
+    glm::mat4 world = btToGlm(t);
+
+    // Wheel mesh is modelled with its pivot at the car origin; we want it
+    // at the wheel centre. Compose: translate(center) * rotX(spin) * translate(-center).
+    glm::mat4 toCenter   = glm::translate(glm::mat4(1.f),  m_cfg.wheelCenters[i]);
+    glm::mat4 toOrigin   = glm::translate(glm::mat4(1.f), -m_cfg.wheelCenters[i]);
+    glm::mat4 spin       = glm::rotate(glm::mat4(1.f), m_wheelSpin,
+                                       glm::vec3(1.f, 0.f, 0.f));
+
+    return world * toCenter * spin * toOrigin;
+}
+
+#endif
