@@ -22,7 +22,8 @@ Working:
 - Ramps: car climbs and launches off them
 
 Planned:
-- Full Asphalt-style track (Blender map in progress)
+- Full Asphalt-style track (no map yet — car drives on a flat grey
+  plane with one test ramp)
 - Wheel spin animation tuning
 - Character controller toggle (FPS <-> car)
 - Editor / scene format
