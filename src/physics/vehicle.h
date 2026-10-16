@@ -34,6 +34,12 @@ public:
         glm::vec3 wheelCenters[4];
         float     wheelRadii[4];
         float     mass = 1500.f;
+        // Derived from mass and target acceleration:
+        //   engineForce * 4 wheels = mass * targetAccel
+        // 1500 kg * 6.7 m/s^2 / 4 = ~2500 N per wheel.
+        float     engineForce  = 2500.f;
+        float     brakeTorque  = 50.f;
+        float     steerAngle   = 0.5f;
         bool      frontWheel[4] = { true, true, false, false };
     };
 

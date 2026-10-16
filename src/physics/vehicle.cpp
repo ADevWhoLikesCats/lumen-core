@@ -117,20 +117,21 @@ void Vehicle::update(float dt) {
 
     const int wheelCount = m_vehicle->getNumWheels();
     const float engineForce = 2500.f;   // N, per driven wheel
-    const float brakeForce  = 30.f;
 
     // Apply engine + steering + brake.
     for (int i = 0; i < wheelCount; ++i) {
         bool front = m_cfg.frontWheel[i];
 
         // All-wheel drive: every wheel gets engine force.
-        float ef = m_throttle * engineForce;
-        if (m_brake > 0.f) ef = -m_brake * brakeForce;
-
+        float ef = m_throttle * m_cfg.engineForce;
         m_vehicle->applyEngineForce(ef, i);
 
+        // Handbrake: Bullet's setBrake is the right way to slow a vehicle;
+        // applyEngineForce(-N) doesn't produce real braking.
+        m_vehicle->setBrake(m_brake * m_cfg.brakeTorque, i);
+
         if (front) {
-            m_vehicle->setSteeringValue(m_steering * 0.4f, i);
+            m_vehicle->setSteeringValue(m_steering * m_cfg.steerAngle, i);
         }
     }
 

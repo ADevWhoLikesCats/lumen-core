@@ -112,6 +112,12 @@ struct Input {
     bool debugPhysics = false;
     bool playBeep = false;
     bool cycleCarFix = false;
+    bool driveForward = false;   // W
+    bool driveBack = false;      // S
+    bool driveLeft = false;      // A
+    bool driveRight = false;     // D
+    bool handbrake = false;      // Space
+    bool toggleCamera = false;   // C
     float scroll = 0.f;
 };
 static Input gInput;
@@ -127,6 +133,18 @@ static void key_cb(GLFWwindow*, int key, int, int action, int) {
     if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) gInput.shift = down;
     if (key == GLFW_KEY_P && action == GLFW_PRESS) gInput.debugPhysics = !gInput.debugPhysics;
     if (key == GLFW_KEY_K && action == GLFW_PRESS) gInput.cycleCarFix = true;
+    if (key == GLFW_KEY_C && action == GLFW_PRESS) gInput.toggleCamera = true;
+    if (key == GLFW_KEY_W) gInput.driveForward = down;
+    if (key == GLFW_KEY_S) gInput.driveBack    = down;
+    if (key == GLFW_KEY_A) gInput.driveLeft    = down;
+    if (key == GLFW_KEY_D) gInput.driveRight   = down;
+    if (key == GLFW_KEY_SPACE) gInput.handbrake = down;
+    if (key == GLFW_KEY_C && action == GLFW_PRESS) gInput.toggleCamera = true;
+    if (key == GLFW_KEY_W) gInput.driveForward = down;
+    if (key == GLFW_KEY_S) gInput.driveBack    = down;
+    if (key == GLFW_KEY_A) gInput.driveLeft    = down;
+    if (key == GLFW_KEY_D) gInput.driveRight   = down;
+    if (key == GLFW_KEY_SPACE) gInput.handbrake = down;
     if (key == GLFW_KEY_F && action == GLFW_PRESS) gInput.playBeep = true;
 }
 
@@ -671,6 +689,17 @@ int main() {
         // stepped in lockstep with the dynamics world.
         int steps = fixed.tick(dt);
         for (int s = 0; s < steps; ++s) {
+            // Drive inputs (only active when chase camera is up).
+            float throttle = (gInput.driveForward ? 1.f : 0.f)
+                           - (gInput.driveBack   ? 1.f : 0.f);
+            float steer    = (gInput.driveLeft    ? 1.f : 0.f)
+                           - (gInput.driveRight   ? 1.f : 0.f);
+            float brake    = gInput.handbrake ? 1.f : 0.f;
+            car.setInput(throttle, steer, brake);
+
+            // Drive inputs (only active when chase camera is up).
+            car.setInput(throttle, steer, brake);
+
             physics.step(fixed.dt);
             player.move(wish * fixed.dt, &physics);
             car.update(fixed.dt);
@@ -716,7 +745,6 @@ int main() {
 
             // Consume the mouse delta for this frame. The next frame
             // starts with zero and only accumulates new movement.
-            gInput.dx = gInput.dy = 0.f;
             gInput.dx = gInput.dy = 0.f;
         }
 
