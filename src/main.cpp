@@ -41,6 +41,8 @@
 #include <sstream>
 #include <iostream>
 
+bool gInputDebugVehicle = false;
+
 // ===============================================================
 // Shader helper — reads source and compiles through Pass
 // ===============================================================
@@ -134,6 +136,11 @@ static void key_cb(GLFWwindow*, int key, int, int action, int) {
     if (key == GLFW_KEY_P && action == GLFW_PRESS) gInput.debugPhysics = !gInput.debugPhysics;
     if (key == GLFW_KEY_K && action == GLFW_PRESS) gInput.cycleCarFix = true;
     if (key == GLFW_KEY_C && action == GLFW_PRESS) gInput.toggleCamera = true;
+    if (key == GLFW_KEY_V && action == GLFW_PRESS) {
+        gInputDebugVehicle = !gInputDebugVehicle;
+        std::fprintf(stderr, "[dbg] vehicle logging %s\n",
+                     gInputDebugVehicle ? "ON" : "OFF");
+    }
     if (key == GLFW_KEY_W) gInput.driveForward = down;
     if (key == GLFW_KEY_S) gInput.driveBack    = down;
     if (key == GLFW_KEY_A) gInput.driveLeft    = down;
@@ -279,26 +286,32 @@ int main() {
     //   body centre (cm):   (-19.5, +65.3, -27.0)
     // Scale factor: 0.01 (cm -> m).
     Vehicle::Config carCfg;
-    carCfg.halfExtents    = glm::vec3(1.00f, 0.45f, 2.40f);
+    // Chassis box in mesh-local space. halfExtents is the box's half size,
+    // bodyCenterLocal is where the box sits relative to the mesh origin.
+    carCfg.halfExtents     = glm::vec3(1.00f, 0.45f, 2.40f);
     carCfg.bodyCenterLocal = glm::vec3(-0.195f, 0.653f, -0.270f);
-    // Connection points = wheel centre + suspension rest length.
-    // The wheel CENTRE lives at y=0.346/0.364 in the mesh; the suspension
-    // attaches above it. Setting connection = wheel centre pulls the wheel
-    // down by the rest length, so the car "droops".
-    const float SUS_REST = 0.30f;
-    carCfg.wheelPositions[0] = glm::vec3( 0.659f, 0.346f + SUS_REST,  0.994f);  // FL
-    carCfg.wheelPositions[1] = glm::vec3(-1.050f, 0.346f + SUS_REST,  0.994f);  // FR
-    carCfg.wheelPositions[2] = glm::vec3( 0.659f, 0.364f + SUS_REST, -1.755f);  // RL
-    carCfg.wheelPositions[3] = glm::vec3(-1.050f, 0.364f + SUS_REST, -1.755f);  // RR
-    carCfg.wheelCenters[0]   = glm::vec3( 0.659f, 0.346f,  0.994f);
-    carCfg.wheelCenters[1]   = glm::vec3(-1.050f, 0.346f,  0.994f);
-    carCfg.wheelCenters[2]   = glm::vec3( 0.659f, 0.364f, -1.755f);
-    carCfg.wheelCenters[3]   = glm::vec3(-1.050f, 0.364f, -1.755f);
+
+    // Wheel pivots, mesh-local, in metres (glb is in cm, scale 0.01).
+    carCfg.wheelCenters[0] = glm::vec3( 0.659f, 0.346f,  0.994f);  // FL
+    carCfg.wheelCenters[1] = glm::vec3(-1.050f, 0.346f,  0.994f);  // FR
+    carCfg.wheelCenters[2] = glm::vec3( 0.659f, 0.364f, -1.755f);  // RL
+    carCfg.wheelCenters[3] = glm::vec3(-1.050f, 0.364f, -1.755f);  // RR
+
     carCfg.wheelRadii[0] = 0.345f;
     carCfg.wheelRadii[1] = 0.345f;
     carCfg.wheelRadii[2] = 0.364f;
     carCfg.wheelRadii[3] = 0.364f;
-    carCfg.mass = 1500.f;
+
+    // Handling. Tune these freely.
+    carCfg.maxSpeed       = 40.f;   // m/s
+    carCfg.maxReverse     = 12.f;
+    carCfg.accel          = 12.f;   // m/s^2
+    carCfg.brakeDecel     = 25.f;
+    carCfg.coastDrag      = 0.6f;
+    carCfg.maxYawRate     = 2.0f;   // rad/s
+    carCfg.steerLowSpeed  = 1.5f;
+    carCfg.steerFullSpeed = 8.0f;
+    carCfg.grip           = 0.12f;   // 1.0 on rails, 0.05 very drifty
 
     Vehicle car;
     // Spawn the car at world origin, 0.8m up so it drops onto the flat ground.

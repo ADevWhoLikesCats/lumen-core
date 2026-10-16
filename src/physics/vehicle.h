@@ -4,53 +4,43 @@
 
 #ifdef LUMEN_HAVE_BULLET
 #include <btBulletDynamicsCommon.h>
-#include <BulletDynamics/Vehicle/btWheelInfo.h>
-#include <BulletDynamics/Vehicle/btVehicleRaycaster.h>
-#include <BulletDynamics/Vehicle/btRaycastVehicle.h>
 
 class PhysicsWorld;
 
-// Wraps btRaycastVehicle + four wheels. The chassis is a box; wheels are
-// raycast against the ground and produce spring/drive/steer forces.
-//
-// Units: metres, seconds, kilograms. The glb is loaded in centimetres, so
-// the caller must scale vertices by 0.01 before handing them to us.
+// Arcade vehicle. The chassis is a kinematic rigid body: code owns its
+// position and rotation, physics only handles collisions with other
+// objects (ramps, walls). No suspension, no raycast vehicle, no solver
+// fighting. This makes handling predictable and removes every class of
+// "car stops when turning" bug.
 class Vehicle {
 public:
-    // halfExtents: chassis box half-sizes, in metres, in chassis local space.
-    // bodyCenterLocal: centre of the visible body relative to the model
-    //   origin, in metres. The physics box is centered here so it sits
-    //   inside the mesh.
-    // wheelPositions: four positions in metres, chassis local space.
-    //   Order: FL, FR, RL, RR.
-    // wheelCenters: for each wheel, the position of the wheel mesh's centre
-    //   in the wheel's own local space (the glb models them at car origin).
-    //   Used to correct the draw transform.
-    // wheelRadii: wheel radius in metres.
     struct Config {
-        glm::vec3 halfExtents;
-        glm::vec3 bodyCenterLocal;
-        glm::vec3 wheelPositions[4];
-        glm::vec3 wheelCenters[4];
-        float     wheelRadii[4];
-        float     mass = 1500.f;
-        // Derived from mass and target acceleration:
-        //   engineForce * 4 wheels = mass * targetAccel
-        // 1500 kg * 6.7 m/s^2 / 4 = ~2500 N per wheel.
-        float     engineForce  = 5000.f;
-        float     brakeTorque  = 50.f;
-        float     steerAngle   = 0.5f;
-        bool      frontWheel[4] = { true, true, false, false };
+        glm::vec3 halfExtents{1.0f, 0.45f, 2.4f};   // chassis box, metres
+        glm::vec3 bodyCenterLocal{0.f};             // box offset in mesh space
+        glm::vec3 wheelCenters[4]{};                 // mesh-space wheel pivots
+        float     wheelRadii[4]{};
+
+        // Handling tunables
+        float maxSpeed       = 40.f;   // m/s forward
+        float maxReverse     = 12.f;   // m/s backward
+        float accel          = 12.f;   // m/s^2
+        float brakeDecel     = 25.f;   // m/s^2
+        float coastDrag      = 0.6f;   // 1/s
+        float maxYawRate     = 2.0f;   // rad/s at full authority
+        float steerLowSpeed  = 1.5f;   // below this, no steering
+        float steerFullSpeed = 8.0f;   // above this, full steering
+        // Drift: how quickly velocity snaps to the car's facing.
+        // 1.0 = no drift (on rails). 0.05 = very drifty. 0.15 = sporty.
+        float grip = 0.15f;
     };
 
     bool init(PhysicsWorld* phys, const glm::mat4& spawnXf, const Config& cfg);
     void shutdown();
 
-    // Advance the vehicle. Must be called inside the fixed-timestep loop,
-    // after PhysicsWorld::step().
+    // Advance one fixed step. Reads inputs, integrates position/rotation,
+    // writes the new transform to the physics body.
     void update(float dt);
 
-    // Drive inputs. Call before update().
     void setInput(float throttle, float steering, float brake);
 
     glm::mat4 chassisTransform() const;
@@ -59,23 +49,24 @@ public:
     btRigidBody* chassis() { return m_chassis; }
 
 private:
-    PhysicsWorld*         m_phys = nullptr;
-    btRigidBody*          m_chassis = nullptr;
-    btRaycastVehicle*     m_vehicle = nullptr;
-    btVehicleRaycaster*   m_raycaster = nullptr;
-    btRaycastVehicle::btVehicleTuning m_tuning;
-    Config                m_cfg;
+    PhysicsWorld* m_phys = nullptr;
+    btRigidBody*  m_chassis = nullptr;
+    btCollisionShape* m_shape = nullptr;
+    Config m_cfg;
 
-    // Cached wheel world-centres (from wheelPositions, in chassis local)
-    // so we can offset the visual draw.
-    glm::vec3 m_wheelDrawOffset[4];
+    // Code-owned state. This is the authoritative position and rotation;
+    // the physics body is kept in sync each update.
+    glm::vec3 m_pos{0.f};
+    float     m_yaw = 0.f;         // radians about world Y
+    float     m_speed = 0.f;       // signed, m/s along m_velDir
+    glm::vec3 m_velDir{0.f, 0.f, 1.f};  // unit direction of travel (may differ from facing)
 
-    // Per-wheel visual spin angle, accumulated from speed.
+    // Visual only
     float m_wheelSpin = 0.f;
 
     float m_throttle = 0.f;
     float m_steering = 0.f;
-    float m_brake = 0.f;
+    float m_brake    = 0.f;
 };
 
 #endif
