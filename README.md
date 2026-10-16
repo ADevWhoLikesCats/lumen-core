@@ -158,7 +158,7 @@ each frame, and played at the contact point.
 
 ## License
 
-[Add a license before anyone else uses this.]
+Apache 2.0
 
 ## Name
 
