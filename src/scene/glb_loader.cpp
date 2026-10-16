@@ -206,10 +206,6 @@ std::vector<GLBMesh> loadGLB(const std::string& path) {
     tinygltf::TinyGLTF loader;
     std::string err, warn;
 
-    // glTF stores image rows top-to-bottom; OpenGL wants bottom-up.
-    // Flip on decode so glTF UVs sample the intended texel.
-    stbi_set_flip_vertically_on_load(1);
-
     bool ok = loader.LoadBinaryFromFile(&model, &err, &warn, path);
     if (!warn.empty()) std::cerr << "glTF warn: " << warn << "\n";
     if (!ok) { std::cerr << "glTF error: " << err << "\n"; return {}; }
@@ -307,7 +303,9 @@ std::vector<GLBMesh> loadGLB(const std::string& path) {
                 Vertex v;
                 v.pos = positions[i];
                 v.nrm = i < normals.size() ? normals[i] : vec3(0,1,0);
-                v.uv  = i < uvs.size()     ? uvs[i]     : vec2(0);
+                v.uv  = i < uvs.size()
+                      ? vec2(uvs[i].x, 1.f - uvs[i].y)   // Max UVs are bottom-up
+                      : vec2(0);
                 v.tangent = i < tangents.size() ? tangents[i] : vec4(0,0,0,1);
                 verts.push_back(v);
             }
