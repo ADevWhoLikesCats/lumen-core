@@ -64,13 +64,13 @@ bool Vehicle::init(PhysicsWorld* phys, const glm::mat4& spawnXf, const Config& c
     t0.setOrigin(btVector3(m_pos.x, m_pos.y, m_pos.z));
 
     btDefaultMotionState* motion = new btDefaultMotionState(t0);
+    btVector3 inertia(0, 0, 0);
+    m_shape->calculateLocalInertia(cfg.mass, inertia);
     btRigidBody::btRigidBodyConstructionInfo ci(
-        0.f, motion, m_shape, btVector3(0, 0, 0));
+        cfg.mass, motion, m_shape, inertia);
     m_chassis = new btRigidBody(ci);
 
-    m_chassis->setCollisionFlags(
-        m_chassis->getCollisionFlags() |
-        btCollisionObject::CF_KINEMATIC_OBJECT);
+    // Dynamic body: no kinematic flag.
     m_chassis->setActivationState(DISABLE_DEACTIVATION);
 
     phys->world()->addRigidBody(m_chassis);
@@ -168,6 +168,10 @@ void Vehicle::update(float dt) {
 
     m_chassis->setWorldTransform(t);
     m_chassis->getMotionState()->setWorldTransform(t);
+
+    // Also set the body's velocity so the solver sees a moving body.
+    m_chassis->setLinearVelocity(
+        btVector3(m_velDir.x * m_speed, 0.f, m_velDir.z * m_speed));
 
     // Expose the actual travel velocity to the physics body so collisions
     // with ramps interact correctly.
