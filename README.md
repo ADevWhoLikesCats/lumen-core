@@ -1,5 +1,4 @@
-```markdown
-# Lumen Core
+# Photonix
 
 A deferred OpenGL renderer with integrated Bullet physics and
 cross-platform audio. Currently a hobby engine — renders, simulates,
@@ -17,15 +16,17 @@ Working:
 - ACES tonemapping
 - Bullet physics: static world, dynamic rigid bodies, contact events
 - miniaudio: 3D spatialized one-shots, cross-platform
-- Arcade vehicle: kinematic chassis, code-driven motion, drift model
+- Arcade vehicle: dynamic chassis, velocity-only control,
+  physics-driven gravity and ramp response
 - glTF/GLB loading with PBR materials and material fixups
+- Ramps: car climbs and launches off them
 
 Planned:
-- Ramps and a proper track
-- Vertical velocity + ground raycast (jumps)
-- Wheel spin, suspension, proper vehicle physics
-- Character controller toggle (FPS ↔ car)
+- Full Asphalt-style track (Blender map in progress)
+- Wheel spin animation tuning
+- Character controller toggle (FPS <-> car)
 - Editor / scene format
+- Loop-de-loop / upside-down driving (needs track-normal force)
 
 ## Requirements
 
@@ -40,148 +41,121 @@ Planned:
 
 ### CMake (recommended, cross-platform)
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-./build/lumen
-```
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+    cmake --build build -j
+    ./build/lumen
 
 ### Make (Linux/macOS)
 
-```bash
-make -j$(nproc)
-./lumen
-```
+    make -j$(nproc)
+    ./lumen
 
 ### Dependencies
 
-**Debian/Ubuntu:**
+Debian/Ubuntu:
 
-```bash
-sudo apt install build-essential cmake libglfw3-dev libglm-dev libbullet-dev
-```
+    sudo apt install build-essential cmake libglfw3-dev libglm-dev libbullet-dev
 
-**Fedora:**
+Fedora:
 
-```bash
-sudo dnf install gcc-c++ cmake glfw-devel glm-devel bullet-devel
-```
+    sudo dnf install gcc-c++ cmake glfw-devel glm-devel bullet-devel
 
-**Arch:**
+Arch:
 
-```bash
-sudo pacman -S base-devel cmake glfw glm bullet
-```
+    sudo pacman -S base-devel cmake glfw glm bullet
 
-**macOS:**
+macOS:
 
-```bash
-brew install cmake glfw glm bullet
-```
+    brew install cmake glfw glm bullet
 
-**Windows (vcpkg):**
+Windows (vcpkg):
 
-```
-vcpkg install glfw3 glm bullet3
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake
-cmake --build build --config Release
-```
+    vcpkg install glfw3 glm bullet3
+    cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake
+    cmake --build build --config Release
 
 ## Run
 
-```bash
-./lumen
-```
+    ./lumen
 
-The engine loads assets relative to the working directory. Run from the
+Assets are loaded relative to the working directory. Run from the
 repository root.
 
 ## Controls
 
-| Key | Action |
-|-----|--------|
-| W | Accelerate |
-| S | Brake / reverse |
-| A | Steer left |
-| D | Steer right |
-| Space | Handbrake |
-| C | Toggle chase / orbit camera |
-| P | Physics debug overlay |
-| V | Vehicle debug logging |
-| K | Cycle car modelFix (debugging) |
-| F | Play test beep |
-| Escape | Quit |
+    W       Accelerate
+    S       Brake / reverse
+    A       Steer left
+    D       Steer right
+    Space   Handbrake
+    C       Toggle chase / orbit camera
+    P       Physics debug overlay
+    V       Vehicle debug logging
+    K       Cycle car modelFix (debugging)
+    F       Play test beep
+    Escape  Quit
 
 ## Project layout
 
-```
-src/
-  core/         asset loading, math, time, collision primitives
-  render/       framebuffer, shaders, meshes, textures, shadowmap
-  scene/        glb loading, map, probe grids, car renderer
-  physics/      Bullet integration, vehicle, debug draw
-  audio/        miniaudio wrapper, impact events
-  main.cpp
-include/        third-party headers (glad, glm, stb, miniaudio)
-shaders/        GLSL sources
-assets/         models, textures, sounds
-```
+    src/
+      core/         asset loading, math, time, collision primitives
+      render/       framebuffer, shaders, meshes, textures, shadowmap
+      scene/        glb loading, map, probe grids, car renderer
+      physics/      Bullet integration, vehicle, debug draw
+      audio/        miniaudio wrapper, impact events
+      main.cpp
+    include/        third-party headers (glad, glm, stb, miniaudio)
+    shaders/        GLSL sources
+    assets/         models, textures, sounds
 
 ## Architecture notes
 
-**Rendering.** Four-attachment G-buffer (lit color, albedo, normal+roughness,
-emissive). Geometry pass writes to it, then SSAO/SSGI/SSR/fog composite on
-top before TAA and ACES tonemapping.
+**Rendering.** Four-attachment G-buffer (lit color, albedo,
+normal+roughness, emissive). Geometry pass writes to it, then
+SSAO/SSGI/SSR/fog composite on top before TAA and ACES tonemapping.
 
-**Physics.** Bullet with a DBVT broadphase. The player controller sweeps a
-capsule against the world. Dynamic bodies are added via `PhysicsWorld`.
-Contact events feed the audio system.
+**Physics.** Bullet with a DBVT broadphase. The player controller
+sweeps a capsule against the world. Dynamic bodies are added via
+`PhysicsWorld`. Contact events feed the audio system.
 
-**Vehicle.** The chassis is a *kinematic* rigid body — code owns its
-position, yaw, and speed; Bullet only handles collision against ramps and
-walls. This removes the friction/solver fighting that makes dynamic-vehicle
-handling unpredictable. Drift is a grip factor that controls how fast the
-velocity direction catches up to the car's facing.
+**Vehicle.** The chassis is a *dynamic* rigid body. The code sets the
+body's **velocity** each frame but never its transform. Physics
+integrates position, so gravity, ramps, jumps, and wall collisions
+are all handled by Bullet. Code owns throttle, brake, steering, and
+lateral grip — applied as forces and velocity modifications. This is
+the pattern that lets physics push the car up a ramp without fighting
+the driver's input.
 
 **Audio.** miniaudio engine, one-shot 3D spatialized sounds. Physics
-contacts above a velocity threshold are pushed to an impact queue, drained
-each frame, and played at the contact point.
+contacts above a velocity threshold are pushed to an impact queue,
+drained each frame, and played at the contact point.
 
 ## Known limitations
 
-- Vehicle has no vertical velocity yet — no jumps off ramps
 - Wheels spin visually but aren't physics-simulated
-- No track yet, just a flat grey plane
 - Per-primitive glb texture loads duplicate uploads
 - Glass rendered opaque (deferred pipeline has no transparency pass)
-- Some assets (spec-gloss exports from 3DS Max) need per-file material fixups
+- Some assets (spec-gloss exports from 3DS Max) need per-file material
+  fixups
+- Steering model is arcade, not simulated — no slip-angle tire model
+- No support for inverted driving surfaces (loop-de-loops)
+
+## Roadmap
+
+1. **Track**: load a Blender-authored glb track, split into visual
+   mesh + physics colliders.
+2. **Content**: multiple ramps, banked turns, a full lap.
+3. **Wheel polish**: suspension travel visual, tire smoke, skid marks.
+4. **Character**: bring back the FPS controller on a toggle key.
+5. **Lighting**: real sun position, moving time of day, skybox.
+6. **Post**: bloom, motion blur, depth of field.
 
 ## License
 
-Apache 2.0
+Apache 2.0 License
 
 ## Name
 
-"Lumen Core" — the renderer that was originally "Lumen Engine" grew a
-physics body and an audio system, so the name got shorter and the project
-got bigger.
-```
-
-That's a working README for where the project actually is. Two things to decide before you save it:
-
-1. **License** — replace the placeholder. MIT is the standard permissive choice if you want people to use this freely. If you're not sure, don't add one yet; the current text just says `[Add a license]`.
-
-2. **The "Status" section** — I described what actually works today. If anything in there is inaccurate (e.g., a feature that's broken or half-wired), tell me and I'll fix it. It's better for the README to under-claim than over-claim.
-
-Save it, then commit:
-
-```bash
-cd ~/Downloads/lumen-core
-cat > README.md <<'EOF'
-... (paste the above)
-EOF
-
-git add README.md
-git commit -m "Rewrite README: current status, build, controls, architecture"
-```
-
+Photonix — the engine formerly known as Lumen. It grew a physics body
+and an audio system, and picked up a name that sounded less like a
+graphics-only tool.
