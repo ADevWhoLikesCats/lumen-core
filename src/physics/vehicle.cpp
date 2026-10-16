@@ -184,7 +184,7 @@ void Vehicle::update(float dt) {
     if (speedAbs > 25.f) speedFactor *= 0.7f;
     if (vFwd < 0.f) speedFactor = -speedFactor;  // reverse steers the other way
 
-    float yaw = -m_steering * MAX_YAW_RATE * speedFactor * dt;
+    float yaw =  m_steering * MAX_YAW_RATE * speedFactor * dt;
 
     if (std::abs(yaw) > 1e-6f) {
         btQuaternion q = tr.getRotation();
@@ -230,10 +230,14 @@ void Vehicle::update(float dt) {
 
                 // Cornering scrubs speed: the sharper the turn, the more
                 // speed lost. cos(angle between old dir and new fwd) is
-                // 1.0 when straight, less when turning.
+                // 1.0 when straight, less when turning. Scrub is scaled
+                // by dt so it's time-based, not frame-based — otherwise
+                // the car stops instantly at high FPS.
                 float cosAngle = dir.dot(newFwd);
-                float scrub = 0.5f + 0.5f * cosAngle;   // 1.0 straight, 0.5 at 90 deg
-                float newSpeed = speedLen * (1.f - (1.f - scrub) * 0.4f);
+                float turnAmount = 1.f - cosAngle;   // 0 straight, 1 opposite
+                // Lose up to ~30% of speed per second while cornering hard.
+                float scrubPerSec = turnAmount * 0.6f;
+                float newSpeed = speedLen * std::max(0.f, 1.f - scrubPerSec * dt);
 
                 m_chassis->setLinearVelocity(
                     btVector3(blended.x() * newSpeed,
