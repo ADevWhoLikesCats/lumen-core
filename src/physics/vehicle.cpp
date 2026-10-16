@@ -94,6 +94,17 @@ void Vehicle::setInput(float throttle, float steering, float brake) {
 void Vehicle::update(float dt) {
     if (!m_chassis) return;
 
+    // ---- Read state that physics now owns ----
+    // The body is dynamic; gravity, ramps, and collisions move it.
+    // We read its Y position and velocity each frame so m_pos stays
+    // in sync, but keep driving X, Z, and yaw ourselves.
+    {
+        btTransform physT;
+        m_chassis->getMotionState()->getWorldTransform(physT);
+        m_pos.y = physT.getOrigin().y();
+        m_vy = m_chassis->getLinearVelocity().y();
+    }
+
     // ---- Longitudinal: throttle, brake, drag ----
     if (m_brake > 0.f) {
         // Hard stop toward zero.

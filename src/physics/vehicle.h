@@ -60,6 +60,7 @@ private:
     float     m_yaw = 0.f;         // radians about world Y
     float     m_speed = 0.f;       // signed, m/s along m_velDir
     glm::vec3 m_velDir{0.f, 0.f, 1.f};  // unit direction of travel (may differ from facing)
+    float     m_vy = 0.f;          // vertical velocity, read from physics
 
     // Visual only
     float m_wheelSpin = 0.f;
