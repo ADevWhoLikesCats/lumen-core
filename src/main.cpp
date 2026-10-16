@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <stb_image.h>
 
 #include "pass.h"
 #include "framebuffer.h"
@@ -101,6 +102,35 @@ struct Shader {
     void set(const char* n, const glm::mat3& m) const { glUniformMatrix3fv(loc(n),1,GL_FALSE,glm::value_ptr(m)); }
     void set(const char* n, const glm::mat4& m) const { glUniformMatrix4fv(loc(n),1,GL_FALSE,glm::value_ptr(m)); }
 };
+
+// ---------------------------------------------------------------
+// Load an equirectangular HDR (Radiance .hdr) as an RGB16F texture.
+// Uses stb_image's float loader. Returns 0 on failure.
+// ---------------------------------------------------------------
+static GLuint loadHDR(const char* path) {
+    stbi_set_flip_vertically_on_load(0);   // we handle V in the shader
+    int w = 0, h = 0, n = 0;
+    float* data = stbi_loadf(path, &w, &h, &n, 3);
+    if (!data) {
+        std::cerr << "[sky] failed to load " << path << ": "
+                  << stbi_failure_reason() << "\n";
+        return 0;
+    }
+
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    stbi_image_free(data);
+    std::cerr << "[sky] loaded " << path << " (" << w << "x" << h << ")\n";
+    return tex;
+}
 
 // ===============================================================
 // Input
@@ -245,6 +275,7 @@ int main() {
 
     // ---------- Assets ----------
     Texture floorTex("assets/ground.png");
+    GLuint skyTex = loadHDR("assets/sky.hdr");
     Texture crateTex("assets/crate.png");
 
     // Geometry: cube + plane
@@ -466,6 +497,7 @@ int main() {
 
     // ---------- Tonemap pass ----------
     Pass tonemapPass = pass_create("shaders/tonemap.vert", "shaders/tonemap.frag");
+    Pass skyboxPass    = pass_create("shaders/fullscreen.vert", "shaders/skybox.frag");
     Pass ssaoPass      = pass_create("shaders/fullscreen.vert", "shaders/ssao.frag");
     Pass ssaoBlurPass  = pass_create("shaders/fullscreen.vert", "shaders/ssao_blur.frag");
     Pass ssgiPass      = pass_create("shaders/fullscreen.vert", "shaders/ssgi.frag");
@@ -897,6 +929,36 @@ int main() {
         glClearColor(0.f, 0.f, 0.f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        // ---------- Sky pass ----------
+        // Draw the HDR sky into attachment 0 only. Geometry draws over
+        // it with depth test on. No depth writes from the sky.
+        if (skyTex) {
+            GLenum one = GL_COLOR_ATTACHMENT0;
+            glDrawBuffers(1, &one);
+
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            glDisable(GL_CULL_FACE);
+
+            pass_use(&skyboxPass);
+            pass_set_mat4(&skyboxPass, "uInvViewProj", glm::inverse(viewProj));
+            pass_set_vec3(&skyboxPass, "uCamPos", cam.pos);
+            pass_set_f32 (&skyboxPass, "uExposure", 0.3f);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, skyTex);
+            pass_set_i32(&skyboxPass, "uSky", 0);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+
+            glEnable(GL_DEPTH_TEST);
+            glDepthMask(GL_TRUE);
+            glEnable(GL_CULL_FACE);
+
+            // Restore 4-attachment draw for the geometry pass.
+            GLenum bufs[4] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
+                               GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3 };
+            glDrawBuffers(4, bufs);
+        }
+
         // Instanced cubes
         pbrInstShader.use();
         pbrInstShader.set("uViewProj",    viewProj);
@@ -1302,7 +1364,9 @@ int main() {
     if (fogCompositeFB.fbo) fb_destroy(&fogCompositeFB);
     if (ssaoBlurFB.fbo) fb_destroy(&ssaoBlurFB);
     if (sceneFB.fbo) fb_destroy(&sceneFB);
+    pass_destroy(&skyboxPass);
     pass_destroy(&tonemapPass);
+    if (skyTex) glDeleteTextures(1, &skyTex);
     tri_grid_destroy(&triGrid);
     probe_grid_destroy(&probeGrid);
     if (ssrFB.fbo) fb_destroy(&ssrFB);
